@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ppt-translator:
+    build: .
+    container_name: gartner-ppt-translator
+    ports:
+      - "8501:8501"
+    # 무중단 서비스의 핵심: 에러가 나거나 사내 리눅스 서버가 재부팅되어도 스스로 되살아남
+    restart: always 
+    volumes:
+      # 컨테이너 내부로 접속할 필요 없이, 바깥 서버 호스트의 edtech_glossary.json 만 
+      # 수정하고 새로고침하면 용어집이 바로바로 생방송(?)처럼 반영되도록 볼륨 마운트
+      - ./edtech_glossary.json:/app/edtech_glossary.json
