@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+google-genai
+anthropic
+deep-translator
+python-pptx
+pymupdf
+pikepdf
+pyjwt
+bcrypt
+authlib
+itsdangerous
+pandas
+tqdm
