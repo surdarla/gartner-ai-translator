@@ -43,7 +43,6 @@ const resources = {
       "trans_done": "번역 완료!",
       "trans_failed": "번역 실패",
       "try_again": "다시 시도",
-      "history_empty": "작업 내역이 없습니다.",
       "chatbot_title": "도움이 필요하신가요?",
       "chatbot_hello": "안녕하세요! 무엇을 도와드릴까요?",
       "save": "저장",
