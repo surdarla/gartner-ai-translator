@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { History as HistoryIcon, Download, CheckCircle, AlertCircle, Loader2, FileText, Ban, Clock, Trash2, Filter } from 'lucide-react';
 import clsx from 'clsx';
+import { getApiUrl } from '../api';
 
 interface Job {
   job_id: string;
@@ -33,7 +34,7 @@ export const History: React.FC = () => {
 
   const fetchHistory = async () => {
     try {
-      const res = await axios.get('http://localhost:8000/history', {
+      const res = await axios.get(getApiUrl('/history'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       setJobs(res.data);
@@ -60,7 +61,7 @@ export const History: React.FC = () => {
   const deleteJob = async (jobId: string) => {
     if (!confirm(t('admin_delete_confirm'))) return;
     try {
-      await axios.delete(`http://localhost:8000/admin/delete-job/${jobId}`, {
+      await axios.delete(getApiUrl(`/admin/delete-job/${jobId}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       setJobs(prev => prev.filter(j => j.job_id !== jobId));
@@ -256,7 +257,7 @@ export const History: React.FC = () => {
                         <div className="flex items-center justify-end gap-2">
                           {job.status === 'completed' && job.output_path ? (
                             <a 
-                              href={`http://localhost:8000/download/${job.job_id}`}
+                              href={getApiUrl(`/download/${job.job_id}`)}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}

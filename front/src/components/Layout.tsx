@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { BookOpen, LogOut, Clock, MessageCircle, FileText, X, Trash2, Plus, Save, Shield } from 'lucide-react';
 import clsx from 'clsx';
 import { HelpChatbot } from './HelpChatbot';
+import { getApiUrl } from '../api';
 
 // --- Glossary Modal Component (Global) ---
 const GlossaryModal: React.FC<{ isOpen: boolean, onClose: () => void, token: string | null }> = ({ isOpen, onClose, token }) => {
@@ -15,7 +16,7 @@ const GlossaryModal: React.FC<{ isOpen: boolean, onClose: () => void, token: str
 
   useEffect(() => {
     if (isOpen && token) {
-      axios.get('http://localhost:8000/glossary', { headers: { Authorization: `Bearer ${token}` } })
+      axios.get(getApiUrl('/glossary'), { headers: { Authorization: `Bearer ${token}` } })
         .then(res => setGlossary(Object.entries(res.data).map(([key, value]) => ({ key, value: value as string }))))
         .catch(console.error);
     }
@@ -27,7 +28,7 @@ const GlossaryModal: React.FC<{ isOpen: boolean, onClose: () => void, token: str
     setLoading(true);
     try {
       const data = Object.fromEntries(glossary.filter(i => i.key.trim() !== '').map(i => [i.key, i.value]));
-      await axios.post('http://localhost:8000/glossary', { glossary: data }, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(getApiUrl('/glossary'), { glossary: data }, { headers: { Authorization: `Bearer ${token}` } });
       alert(t('save') + '!');
       onClose();
     } catch (err) {

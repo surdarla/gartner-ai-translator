@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import clsx from 'clsx';
+import { getApiUrl } from '../api';
 
 /** Lightweight markdown-to-JSX renderer for chatbot messages */
 function renderMarkdown(text: string): React.ReactNode {
@@ -117,7 +118,7 @@ export const HelpChatbot: React.FC = () => {
     setIsTyping(true);
 
     try {
-      const res = await axios.post('http://localhost:8000/chat', 
+      const res = await axios.post(getApiUrl('/chat'), 
         { message: msg },
         { headers: { Authorization: `Bearer ${token}` } }
       );

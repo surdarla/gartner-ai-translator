@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { Users, Activity, DollarSign, ChevronDown, ChevronUp, FileText, Download, CheckCircle, AlertCircle, Loader2, Ban, Clock } from 'lucide-react';
 import clsx from 'clsx';
+import { getApiUrl } from '../api';
 
 interface UserStat {
   username: string;
@@ -38,7 +39,7 @@ export const AdminUsers: React.FC = () => {
 
   useEffect(() => {
     if (token) {
-      axios.get('http://localhost:8000/admin/users', {
+      axios.get(getApiUrl('/admin/users'), {
         headers: { Authorization: `Bearer ${token}` }
       }).then(res => setStats(res.data))
         .catch(console.error)
@@ -54,7 +55,7 @@ export const AdminUsers: React.FC = () => {
     setExpandedUser(username);
     setJobsLoading(true);
     try {
-      const res = await axios.get(`http://localhost:8000/admin/user-jobs/${username}`, {
+      const res = await axios.get(getApiUrl(`/admin/user-jobs/${username}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       setUserJobs(res.data);
@@ -200,7 +201,7 @@ export const AdminUsers: React.FC = () => {
                                 <td className="px-4 py-3 text-right text-xs font-black text-indigo-600 tabular-nums">${job.cost?.toFixed(4) || "0.0000"}</td>
                                 <td className="px-4 py-3 text-right">
                                   {job.status === 'completed' && job.output_path ? (
-                                    <a href={`http://localhost:8000/download/${job.job_id}`} target="_blank" rel="noopener noreferrer"
+                                    <a href={getApiUrl(`/download/${job.job_id}`)} target="_blank" rel="noopener noreferrer"
                                        className="inline-flex items-center gap-1.5 text-blue-600 hover:text-white hover:bg-blue-600 font-black text-[10px] uppercase bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 transition-all">
                                       <Download className="w-3 h-3" /> {t('history_download')}
                                     </a>

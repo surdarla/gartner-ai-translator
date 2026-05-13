@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
+import { getApiUrl } from '../api';
+
 interface User {
   username: string;
   role: string;
@@ -22,7 +24,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (token) {
-      axios.get('http://localhost:8000/auth/me', {
+      axios.get(getApiUrl('/auth/me'), {
         headers: { Authorization: `Bearer ${token}` }
       }).then(res => {
         setUser({ username: res.data.username, role: res.data.role || 'user' });

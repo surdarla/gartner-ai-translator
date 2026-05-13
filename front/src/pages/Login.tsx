@@ -5,6 +5,7 @@ import { Navigate, useSearchParams } from 'react-router-dom';
 import { Lock, User, LogIn, Globe } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
+import { getApiUrl } from '../api';
 
 export const Login: React.FC = () => {
   const { t, i18n } = useTranslation();
@@ -36,7 +37,7 @@ export const Login: React.FC = () => {
       params.append('username', username);
       params.append('password', password);
       
-      const res = await axios.post('http://localhost:8000/auth/login', params, {
+      const res = await axios.post(getApiUrl('/auth/login'), params, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
       login(res.data.access_token);
@@ -48,7 +49,7 @@ export const Login: React.FC = () => {
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = 'http://localhost:8000/auth/google/login';
+    window.location.href = getApiUrl('/auth/google/login');
   };
 
   const changeLanguage = (lng: string) => {

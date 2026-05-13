@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText, Download, X, Play, Ban } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
+import { getApiUrl, getWsUrl } from '../api';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -33,7 +34,7 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     const savedJobId = localStorage.getItem('activeJobId');
     if (savedJobId && status === 'idle') {
-      axios.get(`http://localhost:8000/active-job/${savedJobId}`, {
+      axios.get(getApiUrl(`/active-job/${savedJobId}`), {
         headers: { Authorization: `Bearer ${token}` }
       }).then(res => {
         if (res.data.status === 'processing') {
@@ -66,7 +67,7 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (jobId && status === 'processing') {
-      const ws = new WebSocket(`ws://localhost:8000/ws/progress/${jobId}`);
+      const ws = new WebSocket(getWsUrl(`/ws/progress/${jobId}`));
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         setProgress(data);
@@ -116,7 +117,7 @@ export const Dashboard: React.FC = () => {
     formData.append('direction', direction); formData.append('api_key', apiKey);
     formData.append('system_instruction', systemInstruction); formData.append('test_mode', String(testMode));
     try {
-      const res = await axios.post('http://localhost:8000/translate', formData, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.post(getApiUrl('/translate'), formData, { headers: { Authorization: `Bearer ${token}` } });
       setJobId(res.data.job_id); localStorage.setItem('activeJobId', res.data.job_id);
     } catch (err: any) { setStatus('failed'); }
   };
@@ -128,12 +129,12 @@ export const Dashboard: React.FC = () => {
     { value: "日本語 → 한국어", label: t('dir_ja_ko', 'JPN → KOR') }
   ];
 
-  const downloadResult = () => jobId && window.open(`http://localhost:8000/download/${jobId}`, '_blank');
+  const downloadResult = () => jobId && window.open(getApiUrl(`/download/${jobId}`), '_blank');
 
   const cancelJob = async () => {
     if (!jobId) return;
     try {
-      await axios.post(`http://localhost:8000/cancel/${jobId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(getApiUrl(`/cancel/${jobId}`), {}, { headers: { Authorization: `Bearer ${token}` } });
       setStatus('cancelled');
       localStorage.removeItem('activeJobId');
     } catch (err) {
