@@ -16,3 +16,8 @@ logs/
 result/
 archive/
 ppt/
+output/
+back/data/translation.db*
+node_modules/
+dist/
+.DS_Store

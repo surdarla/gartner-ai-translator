@@ -1,14 +1,31 @@
-version: '3.8'
-
 services:
-  ppt-translator:
-    build: .
-    container_name: gartner-ppt-translator
+  back:
+    build:
+      context: ./back
+    container_name: app-back
     ports:
-      - "8501:8501"
-    # 무중단 서비스의 핵심: 에러가 나거나 사내 리눅스 서버가 재부팅되어도 스스로 되살아남
-    restart: always 
+      - "8000:8000"
     volumes:
-      # 컨테이너 내부로 접속할 필요 없이, 바깥 서버 호스트의 edtech_glossary.json 만 
-      # 수정하고 새로고침하면 용어집이 바로바로 생방송(?)처럼 반영되도록 볼륨 마운트
-      - ./edtech_glossary.json:/app/edtech_glossary.json
+      - ./back/src:/app/src
+      - ./back/data:/app/data
+      - ./output:/app/output
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  front:
+    build:
+      context: ./front
+      target: development
+    container_name: app-front
+    ports:
+      - "80:5173"
+    volumes:
+      - ./front:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - back

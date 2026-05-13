@@ -1,0 +1,18 @@
+{
+    "admin": {
+        "email": "admin@bubblecon.io",
+        "name": "System Admin",
+        "password": "$2b$12$c2wAx3Mc0N7r.GOGQUMiWuGv.8dOdU8.1or9jpiXGO7qyGYgnjx0e"
+    },
+    "user1": {
+        "email": "user1@bubblecon.io",
+        "name": "Team User",
+        "password": "$2b$12$n.tmLjdXifdU4b9G5JLCmuevRwFduJ.oyCrDXhSQ2RxiHyMkmQmSi"
+    },
+    "rlskejdk123@gmail.com": {
+        "email": "rlskejdk123@gmail.com",
+        "name": "김준수",
+        "password": "",
+        "sso": "google"
+    }
+}
