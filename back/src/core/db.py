@@ -53,7 +53,6 @@ class DatabaseManager:
         if not self.db:
             return None
         try:
-            import pandas as pd
             res = (
                 self.db.table("usage_logs")
                 .select("*")
@@ -61,7 +60,7 @@ class DatabaseManager:
                 .limit(limit)
                 .execute()
             )
-            return pd.DataFrame(res.data)
+            return res.data
         except Exception as e:
             logging.error(f"Failed to fetch usage_logs from Supabase: {e}")
             return None

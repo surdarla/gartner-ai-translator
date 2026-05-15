@@ -12,7 +12,6 @@ pyjwt
 bcrypt
 authlib
 itsdangerous
-pandas
 tqdm
 supabase
 httpx
