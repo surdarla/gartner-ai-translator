@@ -1,16 +1,5 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": { "maxDuration": 300 }
-    },
-    {
-      "src": "api/upload.mjs",
-      "use": "@vercel/node"
-    }
-  ],
   "rewrites": [
     {
       "source": "/api/upload",
@@ -22,7 +11,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "front/$1"
+      "destination": "/$1"
     }
   ]
 }
