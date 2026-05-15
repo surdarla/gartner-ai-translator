@@ -5,9 +5,6 @@
   "engines": {
     "node": "20.x"
   },
-  "scripts": {
-    "build": "cd front && npm install && npm run build && cp -r dist ../public"
-  },
   "dependencies": {
     "@vercel/blob": "^0.22.1"
   }
