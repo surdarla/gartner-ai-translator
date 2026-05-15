@@ -1,24 +1,13 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "front/package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
-    },
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": { "maxDuration": 300 }
-    },
-    {
-      "src": "api/upload.mjs",
-      "use": "@vercel/node"
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 300
     }
-  ],
+  },
   "rewrites": [
-    { "source": "/api/upload", "destination": "api/upload.mjs" },
-    { "source": "/api/(.*)", "destination": "api/index.py" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/api/upload", "destination": "/api/upload.mjs" },
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
