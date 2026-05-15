@@ -205,10 +205,13 @@ async def start_translation(file_url: str = Form(...), filename: str = Form(...)
                     f.write(chunk)
     
     db_manager.log_job(job_id, username, filename, provider, direction, "processing", "")
-    await main_loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username)
+    
+    # Vercel Serverless 대응: 글로벌 변수 대신 요청 시점에 즉시 루프 획득
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username, loop)
     return {"job_id": job_id}
 
-def _sync_translation(job_id, input_path, output_path, provider, direction, ext, username):
+def _sync_translation(job_id, input_path, output_path, provider, direction, ext, username, loop):
     try:
         dir_info = DIRECTION_MAP[direction]
         def cb(c, t, txt="", log=""):
@@ -218,7 +221,7 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
                     ACTIVE_JOBS[job_id]["logs"].append(log)
                 if job_id in WS_CONNECTIONS:
                     for ws in WS_CONNECTIONS[job_id]:
-                        main_loop.call_soon_threadsafe(lambda: asyncio.create_task(ws.send_json({"current": c, "total": t, "text": txt, "log": log})))
+                        loop.call_soon_threadsafe(lambda: asyncio.create_task(ws.send_json({"current": c, "total": t, "text": txt, "log": log})))
         
         print(f"DEBUG: Starting translation for job {job_id} with {provider}")
         
@@ -239,27 +242,38 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
             
             try:
-                # Vercel Blob에 결과물 업로드 (Python SDK 대신 API 직접 호출)
-                blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
-                if not blob_token:
-                    raise Exception("BLOB_READ_WRITE_TOKEN is missing on server")
-                    
-                with open(output_path, "rb") as f:
-                    file_content = f.read()
+                # Cloudflare R2에 결과물 업로드 (boto3 사용)
+                account_id = os.getenv("R2_ACCOUNT_ID")
+                access_key = os.getenv("R2_ACCESS_KEY_ID")
+                secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
+                bucket_name = os.getenv("R2_BUCKET_NAME", "uploads")
+                public_domain = os.getenv("R2_PUBLIC_DOMAIN")
                 
-                blob_api_url = f"https://blob.vercel-storage.com/{out_key}"
-                headers = {
-                    "Authorization": f"Bearer {blob_token}",
-                    "x-api-version": "2023-01-30",
-                }
+                if not account_id or not access_key or not secret_key or not public_domain:
+                    raise Exception("R2 credentials missing on server")
                 
-                # Vercel Blob PUT API 호출
-                with httpx.Client() as client:
-                    blob_res = client.put(blob_api_url, content=file_content, headers=headers)
-                    blob_res.raise_for_status()
-                    final_url = blob_res.json()["url"]
+                import boto3
+                s3_client = boto3.client(
+                    's3',
+                    endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+                    aws_access_key_id=access_key,
+                    aws_secret_access_key=secret_key,
+                    region_name='auto'
+                )
                 
-                print(f"DEBUG: Upload complete to Vercel Blob. Public URL: {final_url}")
+                content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation" if ext == ".pptx" else "application/pdf"
+                
+                s3_client.upload_file(
+                    output_path, 
+                    bucket_name, 
+                    out_key,
+                    ExtraArgs={'ContentType': content_type}
+                )
+                
+                base_url = public_domain[:-1] if public_domain.endswith('/') else public_domain
+                final_url = f"{base_url}/{out_key}"
+                
+                print(f"DEBUG: Upload complete to Cloudflare R2. Public URL: {final_url}")
                 ACTIVE_JOBS[job_id].update({"status": "completed", "text": "완료!", "output_path": final_url})
                 db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
             except Exception as upload_err:

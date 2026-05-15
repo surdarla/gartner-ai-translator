@@ -15,3 +15,5 @@ itsdangerous
 tqdm
 supabase
 httpx
+boto3
+botocore
