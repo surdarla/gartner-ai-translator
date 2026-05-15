@@ -67,35 +67,46 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (jobId && status === 'processing') {
-      const ws = new WebSocket(getWsUrl(`/ws/progress/${jobId}`));
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        setProgress(data);
-        if (data.log) {
-          setLogs((prev) => {
-            if (data.category) {
-              const existingIdx = prev.findIndex(l => l.category === data.category);
-              if (existingIdx > -1) {
-                const updated = [...prev];
-                updated[existingIdx] = { text: data.log, category: data.category };
-                return updated;
-              }
-            }
-            return [...prev, { text: data.log, category: data.category || null }];
+      const poll = async () => {
+        try {
+          const res = await axios.get(getApiUrl(`/active-job/${jobId}`), {
+            headers: { Authorization: `Bearer ${token}` }
           });
+          const data = res.data;
+          
+          setProgress({
+            current: data.current,
+            total: data.total,
+            text: data.text,
+            cost: data.cost || 0
+          });
+
+          if (data.logs && data.logs.length > 0) {
+            setLogs(data.logs.map((l: string) => ({
+              text: l,
+              category: (l.startsWith('[') && l.includes(']')) ? l.split(']')[0].slice(1) : null
+            })));
+          }
+
+          if (data.current > 0 && data.total > 0 && startTimeRef.current) {
+            const elapsed = (Date.now() - startTimeRef.current) / 1000;
+            setEta((elapsed / data.current) * (data.total - data.current));
+          }
+
+          if (data.status === 'completed') setStatus('completed');
+          if (data.status === 'failed') setStatus('failed');
+          if (data.status === 'cancelled') setStatus('cancelled');
+
+        } catch (err) {
+          console.error('Polling error:', err);
         }
-        if (data.current > 0 && data.total > 0 && startTimeRef.current) {
-          const elapsed = (Date.now() - startTimeRef.current) / 1000;
-          setEta((elapsed / data.current) * (data.total - data.current));
-        }
-        if (data.text === '완료!') setStatus('completed');
-        if (data.text === '오류 발생') setStatus('failed');
-        if (data.text === '취소됨') setStatus('cancelled');
       };
-      wsRef.current = ws;
-      return () => ws.close();
+
+      const intervalId = setInterval(poll, 2000);
+      poll(); 
+      return () => clearInterval(intervalId);
     }
-  }, [jobId, status]);
+  }, [jobId, status, token]);
 
   useEffect(() => {
     if (logEndRef.current) {
