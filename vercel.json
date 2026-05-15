@@ -1,22 +1,7 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "front/package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
-    },
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/upload.mjs",
-      "use": "@vercel/node"
-    }
-  ],
   "functions": {
-    "api/**/*.py": {
+    "api/index.py": {
       "maxDuration": 300
     },
     "api/upload.mjs": {
@@ -35,10 +20,6 @@
     {
       "source": "/(.*)",
       "destination": "front/$1"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "front/index.html"
     }
   ]
 }
