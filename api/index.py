@@ -37,6 +37,12 @@ except ImportError:
             spec.loader.exec_module(module)
             app = module.app
 
+except ImportError as e:
+    import traceback
+    print(f"CRITICAL: Final import failed: {e}")
+    traceback.print_exc()
+    raise e
+
 if app is None:
     raise ImportError("Could not find FastAPI 'app' in main.py or api.main.py")
 

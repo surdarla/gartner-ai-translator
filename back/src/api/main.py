@@ -32,7 +32,7 @@ from core.document_processor import PDFProcessor, PPTXProcessor
 from core.db import DatabaseManager, supabase
 
 db_manager = DatabaseManager()
-db_manager.auto_timeout_stale_jobs(minutes=10)
+# Removed immediate call to avoid startup crash in serverless env
 
 app = FastAPI(title="AI Document Translator API")
 
@@ -103,12 +103,30 @@ def get_backend_url():
     return (os.getenv("BACKEND_URL") or "http://localhost:8000").rstrip("/")
 
 @app.get("/auth/google/login")
-async def google_login():
+async def google_login(request: Request):
     import secrets
     from urllib.parse import urlencode
+    
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        print("ERROR: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set")
+        raise HTTPException(status_code=500, detail="Google SSO is not configured on server")
+
     redirect_uri = f"{get_backend_url()}/auth/google/callback"
-    state = f"{secrets.token_urlsafe(16)}.{hmac.new(SECRET_KEY.encode(), secrets.token_urlsafe(16).encode(), hashlib.sha256).hexdigest()}"
-    params = urlencode({"client_id": GOOGLE_CLIENT_ID, "redirect_uri": redirect_uri, "response_type": "code", "scope": "openid email profile", "state": state})
+    
+    nonce = secrets.token_urlsafe(16)
+    # Use the same nonce for signature to ensure consistency
+    signature = hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    state = f"{nonce}.{signature}"
+
+    params = urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account"
+    })
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
 @app.get("/auth/google/callback")
