@@ -115,15 +115,13 @@ export const Dashboard: React.FC = () => {
     setProgress({ current: 0, total: 1, text: 'Uploading to storage...', cost: 0.0 });
 
     try {
-      // 1. Vercel Blob에 파일 업로드 (50MB 제한 없음!)
-      const { upload } = await import('@vercel/blob/client');
-      
       // 파일명 정제 강화 (영문, 숫자만 남기고 나머지 제거)
       const extension = file.name.split('.').pop() || 'bin';
       const cleanBaseName = file.name
         .split('.')[0]
         .replace(/[^a-zA-Z0-9]/g, '') // 영문 숫자 외 전멸
         .substring(0, 20); // 너무 길면 자름
+      const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
       
       // 1. 서버에서 직접 업로드 토큰 받아오기 (리다이렉트 방지)
       const tokenResponse = await fetch('/api/upload', {
