@@ -31,7 +31,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.config import load_glossary, save_glossary, DIRECTION_MAP, get_base_dir
 from core.translators import GeminiTranslator, ClaudeTranslator, FreeTranslator, UpstageTranslator
 from core.document_processor import PDFProcessor, PPTXProcessor
-from core.db import DatabaseManager
+from core.db import DatabaseManager, supabase
 
 db_manager = DatabaseManager()
 
@@ -425,37 +425,44 @@ async def start_translation(
         "cost": 0.0
     }
 
-    # 2. Storage에서 임시 파일로 다운로드 (Vercel 함수 메모리 내에서 처리)
+    # 2. Storage에서 임시 파일로 다운로드 (Vercel은 /tmp만 쓰기 가능)
     input_path = ""
     try:
-        async with httpx.AsyncClient() as client:
+        # /tmp 디렉토리 강제 지정
+        tmp_dir = "/tmp" if os.getenv("VERCEL") == "1" else None
+        
+        async with httpx.AsyncClient(timeout=300.0) as client: # 다운로드 타임아웃 확장
             res = await client.get(file_url)
             if res.status_code != 200:
-                raise Exception(f"Failed to download file from storage: {res.status_code}")
+                raise Exception(f"Storage download failed: {res.status_code}")
             
             file_content = res.content
             ACTIVE_JOBS[job_id]["file_size"] = len(file_content)
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_in:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=tmp_dir) as tmp_in:
                 tmp_in.write(file_content)
                 input_path = tmp_in.name
     except Exception as e:
+        error_msg = f"파일 다운로드 실패: {str(e)}"
         ACTIVE_JOBS[job_id]["status"] = "failed"
-        ACTIVE_JOBS[job_id]["text"] = f"파일 다운로드 실패: {str(e)}"
-        raise HTTPException(status_code=500, detail=str(e))
+        ACTIVE_JOBS[job_id]["text"] = error_msg
+        db_manager.log_job(job_id, username, filename, provider, direction, "failed", error_msg, file_size=0)
+        raise HTTPException(status_code=500, detail=error_msg)
 
-    # 3. 출력 경로 설정
-    output_dir = os.path.join(get_base_dir(), "output")
-    os.makedirs(output_dir, exist_ok=True)
-    clean_name = os.path.basename(filename).replace(' ', '_')
-    output_path = os.path.join(output_dir, f"{job_id}_translated_{clean_name}")
+    # 3. 출력 경로 설정 (/tmp 사용)
+    output_path = os.path.join("/tmp", f"{job_id}_translated_{os.path.basename(filename).replace(' ', '_')}")
     
     # 4. DB 로그 남기기
     db_manager.log_job(job_id, username, filename, provider, direction, "processing", "", file_size=ACTIVE_JOBS[job_id]["file_size"])
     db_manager.log_usage(username, "start_translation", provider, direction, ext)
 
-    # 5. 백그라운드 번역 시작
-    asyncio.create_task(run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username))
+    # 5. 번역 시작 (Vercel 타임아웃 내에서 최대한 실행되도록 유도)
+    # 111MB 같은 대용량은 타임아웃에 걸릴 수 있으므로 로그를 확실히 남김
+    try:
+        await run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username)
+    except Exception as e:
+        print(f"Translation Error: {e}")
+        # 오류가 나더라도 일단 job_id는 반환 (클라이언트에서 상태 확인용)
     
     return {"job_id": job_id, "filename": filename}
 
@@ -506,11 +513,28 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, api_
             db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "cancelled", "",
                                file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
         elif success:
-            ACTIVE_JOBS[job_id]["status"] = "completed"
-            ACTIVE_JOBS[job_id]["output_path"] = output_path
-            cb(1, 1, "완료!", "번역이 완료되었습니다.")
-            db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", output_path, 
-                               file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
+            # 번역 성공 시 Supabase Storage에 결과물 업로드
+            out_filename = os.path.basename(output_path)
+            out_storage_path = f"results/{job_id}/{out_filename}"
+            
+            try:
+                with open(output_path, "rb") as f:
+                    supabase.storage.from("documents").upload(out_storage_path, f)
+                
+                # Public URL 획득
+                res = supabase.storage.from("documents").get_public_url(out_storage_path)
+                final_url = res.public_url
+                
+                ACTIVE_JOBS[job_id]["status"] = "completed"
+                ACTIVE_JOBS[job_id]["output_path"] = final_url
+                cb(1, 1, "완료!", "번역 결과물이 저장되었습니다.")
+                db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url, 
+                                   file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
+            except Exception as upload_err:
+                ACTIVE_JOBS[job_id]["status"] = "failed"
+                cb(1, 1, "오류 발생", f"결과 업로드 실패: {str(upload_err)}")
+                db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "failed", "",
+                                   file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
         else:
             ACTIVE_JOBS[job_id]["status"] = "failed"
             cb(1, 1, "오류 발생", "번역 중 오류가 발생했습니다.")

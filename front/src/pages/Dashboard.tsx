@@ -162,7 +162,19 @@ export const Dashboard: React.FC = () => {
     { value: "日本語 → 한국어", label: t('dir_ja_ko', 'JPN → KOR') }
   ];
 
-  const downloadResult = () => jobId && window.open(getApiUrl(`/download/${jobId}`), '_blank');
+  const downloadResult = () => {
+    if (status === 'completed' && progress.text === '완료!') {
+      // The backend should send the public URL in a way we can access it.
+      // For now, let's assume if it's completed, we can get the path from active job.
+      axios.get(getApiUrl(`/active-job/${jobId}`), {
+        headers: { Authorization: `Bearer ${token}` }
+      }).then(res => {
+        if (res.data.output_path) {
+          window.open(res.data.output_path, '_blank');
+        }
+      });
+    }
+  };
 
   const cancelJob = async () => {
     if (!jobId) return;
