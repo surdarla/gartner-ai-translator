@@ -123,9 +123,16 @@ def save_users_db(users):
 @app.get("/auth/google/login")
 async def google_login(request: Request):
     import secrets
+    import hmac as _hmac
+    import hashlib
     from urllib.parse import urlencode
 
-    state = secrets.token_urlsafe(32)
+    # Stateless CSRF protection: state = nonce.HMAC(nonce)
+    # No cookies or sessions needed — works on Vercel serverless
+    nonce = secrets.token_urlsafe(32)
+    sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    state = f"{nonce}.{sig}"
+
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     redirect_uri = f"{backend_url}/auth/google/callback"
 
@@ -137,30 +144,26 @@ async def google_login(request: Request):
         "state": state,
         "access_type": "online",
     })
-    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+    return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
-    response = RedirectResponse(url=auth_url)
-    response.set_cookie(
-        key="oauth_state",
-        value=state,
-        max_age=600,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-    )
-    return response
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = None, state: str = None, error: str = None):
     import httpx
+    import hmac as _hmac
+    import hashlib
 
     if error:
         raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
 
-    # Verify CSRF state
-    cookie_state = request.cookies.get("oauth_state")
-    if not cookie_state or cookie_state != state:
-        raise HTTPException(status_code=400, detail="State mismatch - possible CSRF attack")
+    # Verify HMAC-signed state (stateless CSRF check — no cookies/sessions)
+    try:
+        nonce, sig = state.rsplit(".", 1)
+        expected_sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected_sig):
+            raise ValueError("bad sig")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     redirect_uri = f"{backend_url}/auth/google/callback"
@@ -214,11 +217,7 @@ async def google_callback(request: Request, code: str = None, state: str = None,
     )
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost")
-    response = RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
-    # Clear the state cookie
-    response.delete_cookie("oauth_state")
-    return response
-
+    return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
 
 @app.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
