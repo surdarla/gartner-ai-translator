@@ -1,4 +1,4 @@
-import { generateClientTokenFromReadWriteToken } from '@vercel/blob/client';
+import { handleUpload } from '@vercel/blob/client';
 
 export default async function handler(request, response) {
   response.setHeader('Access-Control-Allow-Origin', '*');
@@ -8,22 +8,27 @@ export default async function handler(request, response) {
   if (request.method === 'OPTIONS') return response.status(200).end();
 
   try {
-    const token = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-    if (!token) throw new Error('환경변수(BLOB_READ_WRITE_TOKEN)가 설정되지 않았습니다.');
+    const body = request.body;
 
-    const { payload } = request.body;
-
-    // Vercel이 요구하는 규격의 클라이언트 토큰 생성
-    const clientToken = await generateClientTokenFromReadWriteToken({
-      token,
-      pathname: payload.pathname,
-      onBeforeGenerateToken: async () => ({
-        allowedContentTypes: ['application/pdf', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/octet-stream'],
-      }),
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname) => {
+        return {
+          allowedContentTypes: [
+            'application/pdf', 
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation', 
+            'application/octet-stream'
+          ],
+        };
+      },
+      onUploadCompleted: async ({ blob, tokenPayload }) => {
+        console.log('Upload completed:', blob.url);
+      },
     });
 
-    return response.status(200).json({ clientToken });
+    return response.status(200).json(jsonResponse);
   } catch (error) {
-    return response.status(400).json({ message: error.message });
+    return response.status(400).json({ error: error.message });
   }
 }

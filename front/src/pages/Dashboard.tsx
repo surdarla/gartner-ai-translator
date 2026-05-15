@@ -5,6 +5,7 @@ import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText,
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, getWsUrl } from '../api';
+import { upload } from '@vercel/blob/client';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -123,40 +124,16 @@ export const Dashboard: React.FC = () => {
         .substring(0, 20); // 너무 길면 자름
       const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
       
-      // 1. 서버에서 직접 업로드 토큰 받아오기 (리다이렉트 방지)
-      const tokenResponse = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          type: 'blob.generate-client-token', 
-          payload: { pathname: safePath, callbackUrl: window.location.origin + '/api/upload' } 
-        })
+      // 공식 Vercel Blob SDK를 사용한 업로드 (CORS 및 리다이렉트 자동 처리)
+      const blob = await upload(safePath, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload',
       });
 
-      if (!tokenResponse.ok) {
-        const errorData = await tokenResponse.json();
-        throw new Error(`토큰 발급 실패: ${errorData.message || '로그인을 확인하세요'}`);
+      if (!blob.url) {
+        throw new Error('업로드 후 URL을 받아오지 못했습니다.');
       }
 
-      const { clientToken } = await tokenResponse.json();
-
-      // 2. Vercel 스토리지로 직접 PUT 업로드 (SDK 우회)
-      const uploadUrl = `https://blob.vercel-storage.com/${safePath}`;
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Authorization': `Bearer ${clientToken}`,
-          'x-api-version': '2023-01-30',
-        },
-      });
-
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        throw new Error(`업로드 실패: ${errorText}`);
-      }
-
-      const blob = await uploadResponse.json();
       const publicUrl = blob.url;
 
       setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });
