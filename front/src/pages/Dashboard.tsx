@@ -142,12 +142,23 @@ export const Dashboard: React.FC = () => {
 
       const { clientToken } = await tokenResponse.json();
 
-      // 2. 받아온 토큰으로 직접 업로드
-      const blob = await upload(safePath, file, {
-        access: 'public',
-        clientToken: clientToken, // 수동으로 받은 토큰 주입
+      // 2. Vercel 스토리지로 직접 PUT 업로드 (SDK 우회)
+      const uploadUrl = `https://blob.vercel-storage.com/${safePath}`;
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Authorization': `Bearer ${clientToken}`,
+          'x-api-version': '2023-01-30',
+        },
       });
-      
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        throw new Error(`업로드 실패: ${errorText}`);
+      }
+
+      const blob = await uploadResponse.json();
       const publicUrl = blob.url;
 
       setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });

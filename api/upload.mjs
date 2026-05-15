@@ -8,32 +8,22 @@ export default async function handler(request, response) {
   if (request.method === 'OPTIONS') return response.status(200).end();
 
   try {
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) throw new Error('BLOB_READ_WRITE_TOKEN is missing');
+    const token = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
+    if (!token) throw new Error('환경변수(BLOB_READ_WRITE_TOKEN)가 설정되지 않았습니다.');
 
-    const { type, payload } = request.body;
+    const { payload } = request.body;
 
-    if (type === 'blob.generate-client-token') {
-      // SDK의 저수준 함수를 사용하여 토큰만 깔끔하게 생성합니다.
-      const clientToken = await generateClientTokenFromReadWriteToken({
-        token,
-        pathname: payload.pathname,
-        onBeforeGenerateToken: async () => ({
-          allowedContentTypes: [
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/vnd.ms-powerpoint',
-            'application/octet-stream'
-          ],
-        }),
-      });
+    // Vercel이 요구하는 규격의 클라이언트 토큰 생성
+    const clientToken = await generateClientTokenFromReadWriteToken({
+      token,
+      pathname: payload.pathname,
+      onBeforeGenerateToken: async () => ({
+        allowedContentTypes: ['application/pdf', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/octet-stream'],
+      }),
+    });
 
-      return response.status(200).json({ clientToken });
-    }
-
-    return response.status(400).json({ error: 'Invalid request type' });
+    return response.status(200).json({ clientToken });
   } catch (error) {
-    console.error('SERVER ERROR:', error.message);
     return response.status(400).json({ message: error.message });
   }
 }
