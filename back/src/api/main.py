@@ -234,8 +234,11 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
         processor = PDFProcessor(translator) if ext == ".pdf" else PPTXProcessor(translator)
         print(f"DEBUG: Processing file: {input_path}")
         
+        if processor.process(input_path, output_path, cb):
+            print(f"DEBUG: Processing success. Uploading {output_path} to Vercel Blob...")
+            out_key = f"results/{job_id}/{os.path.basename(output_path)}"
+            
             try:
-                # Vercel Blob에 결과물 업로드 (Python SDK 대신 API 직접 호출)
                 blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
                 with open(output_path, "rb") as f:
                     file_content = f.read()
@@ -246,14 +249,12 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
                     "x-api-version": "2023-01-30",
                 }
                 
-                # Vercel Blob PUT API 호출
                 with httpx.Client() as client:
                     blob_res = client.put(blob_api_url, content=file_content, headers=headers)
                     blob_res.raise_for_status()
                     final_url = blob_res.json()["url"]
                 
                 print(f"DEBUG: Upload complete to Vercel Blob. Public URL: {final_url}")
-                
                 ACTIVE_JOBS[job_id].update({"status": "completed", "text": "완료!", "output_path": final_url})
                 db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
             except Exception as upload_err:
