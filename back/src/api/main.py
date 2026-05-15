@@ -208,7 +208,7 @@ async def start_translation(file_url: str = Form(...), filename: str = Form(...)
                 print(f"DEBUG: [start_translation] R2 Download status: {res.status_code}")
                 res.raise_for_status()
                 with open(input_path, "wb") as f:
-                    for chunk in res.aiter_bytes():
+                    async for chunk in res.aiter_bytes():
                         f.write(chunk)
         
         print(f"DEBUG: [start_translation] Download finished. size={os.path.getsize(input_path)} bytes")
