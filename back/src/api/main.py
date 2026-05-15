@@ -107,18 +107,41 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
-    hashed_password = user.get("password", "").encode("utf-8")
+    # Check if user has password (SSO users might not)
+    password_str = user.get("password")
+    if not password_str:
+        raise HTTPException(status_code=400, detail="Please login with Google for this account")
+
+    hashed_password = password_str.encode("utf-8")
     if not bcrypt.checkpw(form_data.password.encode("utf-8"), hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
-    token = jwt.encode({"sub": form_data.username, "role": "admin" if form_data.username == "admin" else "user"}, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode({"sub": form_data.username, "role": "admin" if user.get("role") == "admin" else "user"}, SECRET_KEY, algorithm=ALGORITHM)
     return {"access_token": token, "token_type": "bearer"}
+def get_users_db():
+    # Fetch all users from Supabase 'users' table
+    try:
+        response = supabase.table("users").select("*").execute()
+        return {user["email"]: user for user in response.data}
+    except Exception as e:
+        print(f"Error fetching users: {e}")
+        return {}
 
-def save_users_db(users):
-    from core.config import get_back_dir
-    users_path = os.path.join(get_back_dir(), "data", "users.json")
-    with open(users_path, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=4, ensure_ascii=False)
+def save_users_db(users_dict_or_single_user):
+    # If it's the whole dict from legacy code, we handle it, 
+    # but for new SSO we usually upsert one by one.
+    if isinstance(users_dict_or_single_user, dict) and "email" in users_dict_or_single_user:
+        user_data = users_dict_or_single_user
+    else:
+        # Legacy compatibility: the caller passes the whole dict
+        # This is inefficient but keeps compatibility for now.
+        # Ideally, we should use upsert_user(user_data)
+        return
+
+    try:
+        supabase.table("users").upsert(user_data).execute()
+    except Exception as e:
+        print(f"Error saving user: {e}")
 
 # --- Configuration & Helpers ---
 def get_frontend_url(request: Request = None):
@@ -223,15 +246,14 @@ async def google_callback(request: Request, code: str = None, state: str = None,
         raise HTTPException(status_code=400, detail="Google account has no email")
 
     # 5. 사용자 정보 저장 및 JWT 발급
-    users = get_users_db()
-    if email not in users:
-        users[email] = {
-            "email": email,
-            "name": user_info.get("name", email),
-            "password": "", # SSO
-            "sso": "google"
-        }
-        save_users_db(users)
+    user_data = {
+        "email": email,
+        "name": user_info.get("name", email),
+        "password": "", # SSO
+        "sso": "google",
+        "role": "user"
+    }
+    save_users_db(user_data)
 
     jwt_token = jwt.encode(
         {"sub": email, "role": "user", "name": user_info.get("name")},
