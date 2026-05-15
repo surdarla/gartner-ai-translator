@@ -9,6 +9,6 @@
     "build": "cd front && npm install && npm run build && cd .. && cp -r front/dist public && rm -rf front/node_modules"
   },
   "dependencies": {
-    "@vercel/blob": "^0.22.1"
+    "@vercel/blob": "^2.3.3"
   }
 }

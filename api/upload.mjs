@@ -15,11 +15,7 @@ export default async function handler(request, response) {
       request,
       onBeforeGenerateToken: async (pathname) => {
         return {
-          allowedContentTypes: [
-            'application/pdf', 
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation', 
-            'application/octet-stream'
-          ],
+          // 모든 타입 허용 (브라우저나 OS에 따른 MIME 타입 오류 방지)
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
