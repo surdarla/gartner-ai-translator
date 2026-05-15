@@ -417,8 +417,9 @@ export const Dashboard: React.FC = () => {
                 <div className="w-20 h-20 bg-red-100 text-red-600 rounded-3xl flex items-center justify-center mb-6">
                   <AlertCircle className="w-10 h-10" />
                 </div>
-                <h4 className="text-2xl font-black text-slate-800 mb-4">{t('trans_failed')}</h4>
-                <button onClick={() => { setStatus('idle'); setFile(null); setJobId(null); localStorage.removeItem('activeJobId'); }} className="text-blue-600 font-bold hover:underline">{t('try_again')}</button>
+                <h4 className="text-2xl font-black text-slate-800 mb-2">{t('trans_failed')}</h4>
+                <p className="text-red-500 font-bold mb-6 px-10 text-center">{progress.text}</p>
+                <button onClick={() => { setStatus('idle'); setFile(null); setJobId(null); localStorage.removeItem('activeJobId'); setProgress(p => ({ ...p, text: '' })); }} className="text-blue-600 font-bold hover:underline">{t('try_again')}</button>
               </div>
             )}
 
