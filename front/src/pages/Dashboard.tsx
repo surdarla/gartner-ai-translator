@@ -117,10 +117,9 @@ export const Dashboard: React.FC = () => {
 
     try {
       // 1. Supabase Storage에 파일 업로드
-      const fileExt = file.name.split('.').pop();
       const filePath = `uploads/${Date.now()}_${file.name.replace(/\s/g, '_')}`;
       
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('documents')
         .upload(filePath, file);
 
