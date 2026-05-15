@@ -155,8 +155,9 @@ export const Dashboard: React.FC = () => {
       localStorage.setItem('activeJobId', res.data.job_id);
     } catch (err: any) { 
       console.error(err);
+      const errorMessage = err.response?.data?.detail || err.message || 'Unknown error';
       setStatus('failed'); 
-      setProgress(p => ({ ...p, text: 'Upload/Translation failed' }));
+      setProgress(p => ({ ...p, text: `실패: ${errorMessage}` }));
     }
   };
 
