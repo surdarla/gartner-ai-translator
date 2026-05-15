@@ -396,7 +396,8 @@ async def get_active_job(job_id: str, username: str = Depends(get_current_userna
 
 @app.post("/translate")
 async def start_translation(
-    file: UploadFile = File(...),
+    file_url: str = Form(...),      # 파일 본문 대신 Storage URL을 받음
+    filename: str = Form(...),
     provider: str = Form(...),
     direction: str = Form(...),
     api_key: str = Form(""),
@@ -405,48 +406,58 @@ async def start_translation(
     username: str = Depends(get_current_username)
 ):
     job_id = str(uuid.uuid4())
+    import httpx
     
-    # Get actual file size
-    file.file.seek(0, os.SEEK_END)
-    file_size = file.file.tell()
-    file.file.seek(0)
+    # 1. 파일 확장자 체크
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in [".pdf", ".pptx"]:
+        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
 
     ACTIVE_JOBS[job_id] = {
         "status": "processing",
         "current": 0,
         "total": 1,
-        "text": "준비 중...",
+        "text": "파일 다운로드 중...",
         "logs": [],
         "output_path": None,
-        "filename": file.filename,
-        "file_size": file_size,
+        "filename": filename,
+        "file_size": 0,
         "cost": 0.0
     }
-    
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in [".pdf", ".pptx"]:
-        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
-        
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_in:
-        tmp_in.write(await file.read())
-        input_path = tmp_in.name
-        
-    # output/ directory in root
+
+    # 2. Storage에서 임시 파일로 다운로드 (Vercel 함수 메모리 내에서 처리)
+    input_path = ""
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(file_url)
+            if res.status_code != 200:
+                raise Exception(f"Failed to download file from storage: {res.status_code}")
+            
+            file_content = res.content
+            ACTIVE_JOBS[job_id]["file_size"] = len(file_content)
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_in:
+                tmp_in.write(file_content)
+                input_path = tmp_in.name
+    except Exception as e:
+        ACTIVE_JOBS[job_id]["status"] = "failed"
+        ACTIVE_JOBS[job_id]["text"] = f"파일 다운로드 실패: {str(e)}"
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # 3. 출력 경로 설정
     output_dir = os.path.join(get_base_dir(), "output")
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Save the file name properly with Job ID
-    clean_name = os.path.basename(file.filename).replace(' ', '_')
+    clean_name = os.path.basename(filename).replace(' ', '_')
     output_path = os.path.join(output_dir, f"{job_id}_translated_{clean_name}")
     
-    # Log to DB initially
-    db_manager.log_job(job_id, username, file.filename, provider, direction, "processing", "", file_size=file_size)
+    # 4. DB 로그 남기기
+    db_manager.log_job(job_id, username, filename, provider, direction, "processing", "", file_size=ACTIVE_JOBS[job_id]["file_size"])
     db_manager.log_usage(username, "start_translation", provider, direction, ext)
 
-    # Run in background thread
+    # 5. 백그라운드 번역 시작
     asyncio.create_task(run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username))
     
-    return {"job_id": job_id, "filename": file.filename}
+    return {"job_id": job_id, "filename": filename}
 
 async def run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username):
     if main_loop:

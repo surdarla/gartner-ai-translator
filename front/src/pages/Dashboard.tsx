@@ -5,6 +5,7 @@ import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText,
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, getWsUrl } from '../api';
+import { supabase } from '../supabaseClient';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -109,17 +110,50 @@ export const Dashboard: React.FC = () => {
   const startTranslation = async (testMode: boolean = false) => {
     if (!file) return alert(t('upload_title'));
     if (provider !== 'Free (Google Translator)' && !apiKey) return alert(t('api_key_placeholder'));
+    
     setStatus('processing'); setLogs([]); setEta(null); startTimeRef.current = Date.now();
-    setRestoredInfo(null); // Clear restored info on new upload
-    setProgress({ current: 0, total: 1, text: 'Uploading...', cost: 0.0 });
-    const formData = new FormData();
-    formData.append('file', file); formData.append('provider', provider.split(' ')[0]);
-    formData.append('direction', direction); formData.append('api_key', apiKey);
-    formData.append('system_instruction', systemInstruction); formData.append('test_mode', String(testMode));
+    setRestoredInfo(null);
+    setProgress({ current: 0, total: 1, text: 'Uploading to storage...', cost: 0.0 });
+
     try {
-      const res = await axios.post(getApiUrl('/translate'), formData, { headers: { Authorization: `Bearer ${token}` } });
-      setJobId(res.data.job_id); localStorage.setItem('activeJobId', res.data.job_id);
-    } catch (err: any) { setStatus('failed'); }
+      // 1. Supabase Storage에 파일 업로드
+      const fileExt = file.name.split('.').pop();
+      const filePath = `uploads/${Date.now()}_${file.name.replace(/\s/g, '_')}`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file);
+
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+
+      // 2. 업로드된 파일의 Public URL 가져오기
+      const { data: { publicUrl } } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });
+
+      // 3. 백엔드에는 파일 본문 대신 URL 전달
+      const formData = new FormData();
+      formData.append('file_url', publicUrl);
+      formData.append('filename', file.name);
+      formData.append('provider', provider.split(' ')[0]);
+      formData.append('direction', direction);
+      formData.append('api_key', apiKey);
+      formData.append('system_instruction', systemInstruction);
+      formData.append('test_mode', String(testMode));
+
+      const res = await axios.post(getApiUrl('/translate'), formData, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      
+      setJobId(res.data.job_id); 
+      localStorage.setItem('activeJobId', res.data.job_id);
+    } catch (err: any) { 
+      console.error(err);
+      setStatus('failed'); 
+      setProgress(p => ({ ...p, text: 'Upload/Translation failed' }));
+    }
   };
 
   const getDirectionOptions = () => [
