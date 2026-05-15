@@ -62,22 +62,27 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # --- DB & Auth ---
 def get_users_db():
-    if supabase is None: return {}
+    if supabase is None:
+        return {}
     try:
         res = supabase.table("users").select("*").execute()
         return {u["email"]: u for u in res.data}
-    except: return {}
+    except:
+        return {}
 
 def save_users_db(user_data):
     if supabase:
-        try: supabase.table("users").upsert(user_data).execute()
-        except Exception as e: print(f"DB Error: {e}")
+        try:
+            supabase.table("users").upsert(user_data).execute()
+        except Exception as e:
+            print(f"DB Error: {e}")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return {"username": payload["sub"], "role": payload.get("role", "user")}
-    except: raise HTTPException(status_code=401)
+    except:
+        raise HTTPException(status_code=401)
 
 async def get_current_username(user: dict = Depends(get_current_user)):
     return user["username"]
@@ -108,13 +113,10 @@ async def google_login(request: Request):
     from urllib.parse import urlencode
     
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        print("ERROR: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set")
-        raise HTTPException(status_code=500, detail="Google SSO is not configured on server")
+        raise HTTPException(status_code=500, detail="Google SSO not configured")
 
     redirect_uri = f"{get_backend_url()}/auth/google/callback"
-    
     nonce = secrets.token_urlsafe(16)
-    # Use the same nonce for signature to ensure consistency
     signature = hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
     state = f"{nonce}.{signature}"
 
@@ -131,16 +133,19 @@ async def google_login(request: Request):
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = None, state: str = None, error: str = None):
-    if error or not code: raise HTTPException(status_code=400)
+    if error or not code:
+        raise HTTPException(status_code=400)
     async with httpx.AsyncClient() as client:
         t_res = await client.post("https://oauth2.googleapis.com/token", data={
             "code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
             "redirect_uri": f"{get_backend_url()}/auth/google/callback", "grant_type": "authorization_code"
         })
         t_data = t_res.json()
-        if "access_token" not in t_data: raise HTTPException(status_code=400)
+        if "access_token" not in t_data:
+            raise HTTPException(status_code=400)
         u_res = await client.get("https://www.googleapis.com/oauth2/v3/userinfo", headers={"Authorization": f"Bearer {t_data['access_token']}"})
         u_info = u_res.json()
+    
     email = u_info.get("email")
     save_users_db({"email": email, "name": u_info.get("name", email), "sso": "google", "role": "user"})
     jwt_token = jwt.encode({"sub": email, "role": "user", "name": u_info.get("name")}, SECRET_KEY)
@@ -148,10 +153,12 @@ async def google_callback(request: Request, code: str = None, state: str = None,
 
 # --- Features ---
 @app.get("/auth/me")
-async def get_me(user: dict = Depends(get_current_user)): return user
+async def get_me(user: dict = Depends(get_current_user)):
+    return user
 
 @app.get("/glossary")
-async def get_glossary(): return load_glossary()
+async def get_glossary():
+    return load_glossary()
 
 @app.post("/glossary")
 async def update_glossary(data: dict):
@@ -170,14 +177,19 @@ async def startup_loop():
 @app.websocket("/ws/progress/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     await websocket.accept()
-    if job_id not in WS_CONNECTIONS: WS_CONNECTIONS[job_id] = []
+    if job_id not in WS_CONNECTIONS:
+        WS_CONNECTIONS[job_id] = []
     WS_CONNECTIONS[job_id].append(websocket)
     try:
-        while True: await websocket.receive_text()
-    except: WS_CONNECTIONS[job_id].remove(websocket)
+        while True:
+            await websocket.receive_text()
+    except:
+        if job_id in WS_CONNECTIONS:
+            WS_CONNECTIONS[job_id].remove(websocket)
 
 @app.get("/active-job/{job_id}")
-async def get_active_job(job_id: str): return ACTIVE_JOBS.get(job_id, {"status": "not_found"})
+async def get_active_job(job_id: str):
+    return ACTIVE_JOBS.get(job_id, {"status": "not_found"})
 
 @app.post("/translate")
 async def start_translation(file_url: str = Form(...), filename: str = Form(...), provider: str = Form(...), direction: str = Form(...), username: str = Depends(get_current_username)):
@@ -190,7 +202,8 @@ async def start_translation(file_url: str = Form(...), filename: str = Form(...)
     async with httpx.AsyncClient(timeout=600.0) as client:
         async with client.stream("GET", file_url) as res:
             with open(input_path, "wb") as f:
-                for chunk in res.aiter_bytes(): f.write(chunk)
+                for chunk in res.aiter_bytes():
+                    f.write(chunk)
     
     db_manager.log_job(job_id, username, filename, provider, direction, "processing", "")
     await main_loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username)
@@ -202,26 +215,32 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
         def cb(c, t, txt="", log=""):
             if job_id in ACTIVE_JOBS:
                 ACTIVE_JOBS[job_id].update({"current": c, "total": t, "text": txt})
-                if log: ACTIVE_JOBS[job_id]["logs"].append(log)
+                if log:
+                    ACTIVE_JOBS[job_id]["logs"].append(log)
                 if job_id in WS_CONNECTIONS:
                     for ws in WS_CONNECTIONS[job_id]:
                         main_loop.call_soon_threadsafe(lambda: asyncio.create_task(ws.send_json({"current": c, "total": t, "text": txt, "log": log})))
         
-        if provider == "Gemini": translator = GeminiTranslator(os.getenv("GEMINI_API_KEY"), dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
-        else: translator = FreeTranslator(dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
+        if provider == "Gemini":
+            translator = GeminiTranslator(os.getenv("GEMINI_API_KEY"), dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
+        else:
+            translator = FreeTranslator(dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
         
         processor = PDFProcessor(translator) if ext == ".pdf" else PPTXProcessor(translator)
         if processor.process(input_path, output_path, cb):
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
-            with open(output_path, "rb") as f: supabase.storage.from("documents").upload(out_key, f)
+            with open(output_path, "rb") as f:
+                supabase.storage.from("documents").upload(out_key, f)
             final_url = supabase.storage.from("documents").get_public_url(out_key).public_url
             ACTIVE_JOBS[job_id].update({"status": "completed", "output_path": final_url})
             db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
     except Exception as e:
-        if job_id in ACTIVE_JOBS: ACTIVE_JOBS[job_id]["status"] = "failed"
+        if job_id in ACTIVE_JOBS:
+            ACTIVE_JOBS[job_id]["status"] = "failed"
         print(f"Error: {e}")
     finally:
-        if os.path.exists(input_path): os.remove(input_path)
+        if os.path.exists(input_path):
+            os.remove(input_path)
 
 @app.get("/history")
 async def get_history(user: dict = Depends(get_current_user)):
@@ -230,7 +249,9 @@ async def get_history(user: dict = Depends(get_current_user)):
 @app.get("/download/{job_id}")
 async def download_file(job_id: str):
     job = ACTIVE_JOBS.get(job_id)
-    if job and job.get("output_path"): return RedirectResponse(url=job["output_path"])
+    if job and job.get("output_path"):
+        return RedirectResponse(url=job["output_path"])
     res = supabase.table("jobs").select("output_path").eq("job_id", job_id).execute()
-    if res.data: return RedirectResponse(url=res.data[0]["output_path"])
+    if res.data:
+        return RedirectResponse(url=res.data[0]["output_path"])
     raise HTTPException(status_code=404)
