@@ -4,22 +4,18 @@ import json
 import uuid
 import tempfile
 import asyncio
+import hmac
+import hashlib
+import jwt
+import bcrypt
+import httpx
+from datetime import datetime
 from dotenv import load_dotenv
 from typing import Dict, Any, List
-
-# Python 3.11+ has tomllib. If not available, use tomli.
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-
-import bcrypt
-import jwt
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from google import genai
@@ -57,35 +53,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SECRET_KEY = "supersecretkey"  # In production, move to env
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 ALGORITHM = "HS256"
 
 # Google SSO Setup
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or os.getenv("CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv("CLIENT_SECRET")
 
-oauth = OAuth()
-oauth.register(
-    name='google',
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={
-        'scope': 'openid email profile'
-    }
-)
-
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
+# --- Database Operations ---
+
 def get_users_db():
-    from core.config import get_back_dir
-    users_path = os.path.join(get_back_dir(), "data", "users.json")
-    if not os.path.exists(users_path):
+    if supabase is None:
+        print("ERROR: Supabase client is None. Check env vars.")
         return {}
-    with open(users_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        response = supabase.table("users").select("*").execute()
+        return {user["email"]: user for user in response.data}
+    except Exception as e:
+        print(f"Error fetching users: {e}")
+        return {}
+
+def save_users_db(user_data):
+    if supabase is None: return
+    try:
+        supabase.table("users").upsert(user_data).execute()
+    except Exception as e:
+        print(f"Error saving user: {e}")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
@@ -100,6 +96,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 async def get_current_username(current_user: dict = Depends(get_current_user)):
     return current_user["username"]
 
+# --- Authentication Endpoints ---
+
 @app.post("/auth/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     users = get_users_db()
@@ -107,78 +105,35 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
-    # Check if user has password (SSO users might not)
     password_str = user.get("password")
     if not password_str:
         raise HTTPException(status_code=400, detail="Please login with Google for this account")
 
-    hashed_password = password_str.encode("utf-8")
-    if not bcrypt.checkpw(form_data.password.encode("utf-8"), hashed_password):
+    if not bcrypt.checkpw(form_data.password.encode("utf-8"), password_str.encode("utf-8")):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     
-    token = jwt.encode({"sub": form_data.username, "role": "admin" if user.get("role") == "admin" else "user"}, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode({"sub": form_data.username, "role": user.get("role", "user")}, SECRET_KEY, algorithm=ALGORITHM)
     return {"access_token": token, "token_type": "bearer"}
-def get_users_db():
-    # Fetch all users from Supabase 'users' table
-    try:
-        response = supabase.table("users").select("*").execute()
-        return {user["email"]: user for user in response.data}
-    except Exception as e:
-        print(f"Error fetching users: {e}")
-        return {}
 
-def save_users_db(users_dict_or_single_user):
-    # If it's the whole dict from legacy code, we handle it, 
-    # but for new SSO we usually upsert one by one.
-    if isinstance(users_dict_or_single_user, dict) and "email" in users_dict_or_single_user:
-        user_data = users_dict_or_single_user
-    else:
-        # Legacy compatibility: the caller passes the whole dict
-        # This is inefficient but keeps compatibility for now.
-        # Ideally, we should use upsert_user(user_data)
-        return
-
-    try:
-        supabase.table("users").upsert(user_data).execute()
-    except Exception as e:
-        print(f"Error saving user: {e}")
-
-# --- Configuration & Helpers ---
 def get_frontend_url(request: Request = None):
     url = os.getenv("FRONTEND_URL")
-    
-    # Vercel 환경인데 url이 없거나 localhost라면, 현재 요청 주소에서 도메인 추출
-    if os.getenv("VERCEL") == "1" or (not url or "localhost" in url):
-        if request:
-            # request.url.netloc은 ai-translator-pi-ruby.vercel.app 같은 도메인임
-            detected_url = f"{request.url.scheme}://{request.url.netloc}"
-            # 만약 netloc에 /api가 포함되어 있다면 제거 (Vercel rewrite 고려)
-            return detected_url.replace("/api", "").rstrip("/")
-            
-    if not url:
-        return "http://localhost:5173"
-    return url.rstrip("/")
+    if os.getenv("VERCEL") == "1" and request:
+        detected_url = f"{request.url.scheme}://{request.url.netloc}"
+        return detected_url.replace("/api", "").rstrip("/")
+    return (url or "http://localhost:5173").rstrip("/")
 
 def get_backend_url():
     url = os.getenv("BACKEND_URL")
-    if not url:
-        return "http://localhost:8000"
-    return url.rstrip("/")
+    return (url or "http://localhost:8000").rstrip("/")
 
 @app.get("/auth/google/login")
 async def google_login(request: Request):
     import secrets
-    import hmac as _hmac
-    import hashlib
     from urllib.parse import urlencode
-
-    # 1. 명시적인 redirect_uri 구성 (Google Console에 등록한 것과 100% 일치해야 함)
+    
     redirect_uri = f"{get_backend_url()}/auth/google/callback"
-
-    # 2. Stateless CSRF protection: state = nonce.signature
-    # 서버리스 인스턴스가 바뀌어도 SECRET_KEY만 같으면 검증 가능함
     nonce = secrets.token_urlsafe(32)
-    signature = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
     state = f"{nonce}.{signature}"
 
     params = urlencode({
@@ -190,82 +145,60 @@ async def google_login(request: Request):
         "access_type": "online",
         "prompt": "select_account"
     })
-    
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = None, state: str = None, error: str = None):
-    import httpx
-    import hmac as _hmac
-    import hashlib
-
     if error:
         raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
-    # 1. State 검증 (Stateless HMAC verification)
     try:
         nonce, signature = state.rsplit(".", 1)
-        expected_sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
-        if not _hmac.compare_digest(signature, expected_sig):
-            raise ValueError("Invalid OAuth state signature")
+        expected_sig = hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected_sig):
+            raise ValueError("Invalid state")
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state - possible CSRF")
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
-    # 2. Token 교환을 위한 redirect_uri (로그인 시와 정확히 동일해야 함)
     redirect_uri = f"{get_backend_url()}/auth/google/callback"
 
-    # 3. Authorization Code -> Access Token 교환
     async with httpx.AsyncClient() as client:
-        token_res = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-    
-    token_data = token_res.json()
-    if "access_token" not in token_data:
-        raise HTTPException(status_code=400, detail=f"Failed to exchange token: {token_data}")
+        # Token exchange
+        token_res = await client.post("https://oauth2.googleapis.com/token", data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        })
+        token_data = token_res.json()
+        if "access_token" not in token_data:
+            raise HTTPException(status_code=400, detail="Failed to exchange token")
 
-    # 4. 사용자 정보 가져오기
-    async with httpx.AsyncClient() as client:
-        userinfo_res = await client.get(
-            "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {token_data['access_token']}"},
-        )
-    user_info = userinfo_res.json()
+        # User info fetch
+        userinfo_res = await client.get("https://www.googleapis.com/oauth2/v3/userinfo", 
+                                        headers={"Authorization": f"Bearer {token_data['access_token']}"})
+        user_info = userinfo_res.json()
     
     email = user_info.get("email")
     if not email:
         raise HTTPException(status_code=400, detail="Google account has no email")
 
-    # 5. 사용자 정보 저장 및 JWT 발급
-    user_data = {
+    save_users_db({
         "email": email,
         "name": user_info.get("name", email),
-        "password": "", # SSO
         "sso": "google",
         "role": "user"
-    }
-    save_users_db(user_data)
+    })
 
-    jwt_token = jwt.encode(
-        {"sub": email, "role": "user", "name": user_info.get("name")},
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
-
-    # 6. 프론트엔드로 리다이렉트 (request를 전달하여 자동 도메인 감지)
+    jwt_token = jwt.encode({"sub": email, "role": "user", "name": user_info.get("name")}, SECRET_KEY, algorithm=ALGORITHM)
     return RedirectResponse(url=f"{get_frontend_url(request)}/login?token={jwt_token}")
 
-@app.get("/auth/me")
+# --- Translation & Core Logic ---
 
+@app.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
 
@@ -286,43 +219,23 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat_with_ai(req: ChatRequest, username: str = Depends(get_current_username)):
-    # Reload .env to pick up changes in real-time
-    load_dotenv(os.path.join(get_base_dir(), ".env"), override=True)
-    
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return {"response": "GEMINI_API_KEY가 설정되지 않아 챗봇을 사용할 수 없습니다."}
+        return {"response": "GEMINI_API_KEY가 설정되지 않았습니다."}
     
     client = genai.Client(api_key=api_key)
-    system_prompt = f"""당신은 AI 문서 번역 플랫폼의 헬프봇입니다. 다음 정보를 바탕으로 사용자에게 친절하고 간결하게 답변하세요.
-- 사용법: 파일을 대시보드에 드래그 앤 드롭 후 '번역 시작' 버튼 클릭.
-- 지원 형식: PDF, PPTX. 
-- 엔진: Gemini, Claude, Upstage, Free(Google).
-- 용어집(Glossary): 사내 약어나 특정 용어를 고정 번역할 때 사용.
-- 문제 해결: PPTX 레이아웃이 깨지면 다운로드 후 폰트 크기 조절 권장.
-한국어로 질문하면 한국어로, 영어로 질문하면 영어로 답변하세요.
-
-사용자 질문: {req.message}"""
-
     try:
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=system_prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.7,
-                max_output_tokens=500,
-                thinking_config=types.ThinkingConfig(thinking_budget=0)
-            )
+            contents=f"사용자 질문: {req.message}",
+            config=types.GenerateContentConfig(temperature=0.7)
         )
         return {"response": response.text.strip()}
     except Exception as e:
-        return {"response": f"죄송합니다. 챗봇 처리 중 오류가 발생했습니다: {str(e)}"}
+        return {"response": f"오류 발생: {str(e)}"}
 
-# Background job manager
 ACTIVE_JOBS: Dict[str, Dict[str, Any]] = {}
 WS_CONNECTIONS: Dict[str, List[WebSocket]] = {}
-
-# Global loop reference to use from background threads
 main_loop = None
 
 @app.on_event("startup")
@@ -331,145 +244,73 @@ async def startup_event():
     main_loop = asyncio.get_running_loop()
 
 def update_job_progress(job_id: str, current: int, total: int, text: str = "", log_msg: str = ""):
-    if job_id not in ACTIVE_JOBS:
-        return
+    if job_id not in ACTIVE_JOBS: return
     job = ACTIVE_JOBS[job_id]
-    job["current"] = current
-    job["total"] = total
-    if text:
-        job["text"] = text
-    if log_msg:
-        job["logs"].append(log_msg)
+    job.update({"current": current, "total": total})
+    if text: job["text"] = text
+    if log_msg: job["logs"].append(log_msg)
     
-    # Broadcast to connected websockets using the captured main loop
     if job_id in WS_CONNECTIONS and main_loop:
-        msg = {
-            "current": current,
-            "total": total,
-            "text": job["text"],
-            "cost": job.get("cost", 0.0),
-            "log": log_msg,
-            "category": log_msg.split(']')[0][1:] if ']' in log_msg else None
-        }
+        msg = {"current": current, "total": total, "text": job["text"], "cost": job.get("cost", 0.0), "log": log_msg}
         for ws in WS_CONNECTIONS[job_id]:
-            main_loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(ws.send_json(msg))
-            )
+            main_loop.call_soon_threadsafe(lambda: asyncio.create_task(ws.send_json(msg)))
 
 @app.websocket("/ws/progress/{job_id}")
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     await websocket.accept()
-    
-    # Send initial state/logs if job exists
-    if job_id in ACTIVE_JOBS:
-        job = ACTIVE_JOBS[job_id]
-        await websocket.send_json({
-            "current": job["current"],
-            "total": job["total"],
-            "text": job["text"],
-            "cost": job.get("cost", 0.0),
-            "log": "Restored session logs..."
-        })
-        for prev_log in job["logs"]:
-            await websocket.send_json({
-                "current": job["current"],
-                "total": job["total"],
-                "text": job["text"],
-                "cost": job.get("cost", 0.0),
-                "log": prev_log
-            })
-
-    if job_id not in WS_CONNECTIONS:
-        WS_CONNECTIONS[job_id] = []
+    if job_id not in WS_CONNECTIONS: WS_CONNECTIONS[job_id] = []
     WS_CONNECTIONS[job_id].append(websocket)
     try:
-        while True:
-            await websocket.receive_text()
+        while True: await websocket.receive_text()
     except WebSocketDisconnect:
         WS_CONNECTIONS[job_id].remove(websocket)
 
 @app.get("/active-job/{job_id}")
 async def get_active_job(job_id: str, username: str = Depends(get_current_username)):
-    if job_id not in ACTIVE_JOBS:
-        raise HTTPException(status_code=404, detail="Job not found")
+    if job_id not in ACTIVE_JOBS: raise HTTPException(status_code=404, detail="Job not found")
     return ACTIVE_JOBS[job_id]
 
 @app.post("/translate")
 async def start_translation(
-    file_url: str = Form(...),      # 파일 본문 대신 Storage URL을 받음
+    file_url: str = Form(...),
     filename: str = Form(...),
     provider: str = Form(...),
     direction: str = Form(...),
     api_key: str = Form(""),
-    system_instruction: str = Form("Translate maintaining a professional business tone."),
+    system_instruction: str = Form("Translate business tone."),
     test_mode: bool = Form(False),
     username: str = Depends(get_current_username)
 ):
     job_id = str(uuid.uuid4())
-    import httpx
-    
-    # 1. 파일 확장자 체크
     ext = os.path.splitext(filename)[1].lower()
     if ext not in [".pdf", ".pptx"]:
-        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
+        raise HTTPException(status_code=400, detail="Unsupported format")
 
     ACTIVE_JOBS[job_id] = {
-        "status": "processing",
-        "current": 0,
-        "total": 1,
-        "text": "파일 다운로드 중...",
-        "logs": [],
-        "output_path": None,
-        "filename": filename,
-        "file_size": 0,
-        "cost": 0.0
+        "status": "processing", "current": 0, "total": 1, "text": "Downloading...",
+        "logs": [], "output_path": None, "filename": filename, "file_size": 0, "cost": 0.0
     }
 
-    # 2. Storage에서 임시 파일로 다운로드 (Streaming 방식 - 메모리 절약)
-    input_path = ""
+    input_path = os.path.join("/tmp", f"{job_id}{ext}")
     try:
-        tmp_dir = "/tmp" if os.getenv("VERCEL") == "1" else None
-        # 스트리밍을 위한 임시 파일 생성
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=tmp_dir) as tmp_in:
-            input_path = tmp_in.name
-            
-            print(f"[Job {job_id}] Starting streaming download for {filename}...")
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                async with client.stream("GET", file_url) as response:
-                    if response.status_code != 200:
-                        raise Exception(f"Storage download failed: {response.status_code}")
-                    
-                    downloaded_size = 0
-                    for chunk in response.aiter_bytes(chunk_size=1024*1024): # 1MB 단위로 스트리밍
-                        tmp_in.write(chunk)
-                        downloaded_size += len(chunk)
-            
-            ACTIVE_JOBS[job_id]["file_size"] = downloaded_size
-            print(f"[Job {job_id}] Download complete: {downloaded_size} bytes saved to {input_path}")
-            
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            async with client.stream("GET", file_url) as res:
+                if res.status_code != 200: raise Exception("Download failed")
+                with open(input_path, "wb") as f:
+                    size = 0
+                    for chunk in res.aiter_bytes():
+                        f.write(chunk)
+                        size += len(chunk)
+                ACTIVE_JOBS[job_id]["file_size"] = size
     except Exception as e:
-        error_msg = f"파일 스트리밍 다운로드 실패: {str(e)}"
-        print(f"[Job {job_id}] ERROR: {error_msg}")
         ACTIVE_JOBS[job_id]["status"] = "failed"
-        ACTIVE_JOBS[job_id]["text"] = error_msg
-        db_manager.log_job(job_id, username, filename, provider, direction, "failed", error_msg, file_size=0)
-        raise HTTPException(status_code=500, detail=error_msg)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # 3. 출력 경로 설정 (/tmp 사용)
-    output_path = os.path.join("/tmp", f"{job_id}_translated_{os.path.basename(filename).replace(' ', '_')}")
-    
-    # 4. DB 로그 남기기
+    output_path = os.path.join("/tmp", f"{job_id}_out{ext}")
     db_manager.log_job(job_id, username, filename, provider, direction, "processing", "", file_size=ACTIVE_JOBS[job_id]["file_size"])
-    db_manager.log_usage(username, "start_translation", provider, direction, ext)
-
-    # 5. 번역 시작 (Vercel 타임아웃 내에서 최대한 실행되도록 유도)
-    # 111MB 같은 대용량은 타임아웃에 걸릴 수 있으므로 로그를 확실히 남김
-    try:
-        await run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username)
-    except Exception as e:
-        print(f"Translation Error: {e}")
-        # 오류가 나더라도 일단 job_id는 반환 (클라이언트에서 상태 확인용)
     
+    # Sync wait for Vercel
+    await run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username)
     return {"job_id": job_id, "filename": filename}
 
 async def run_translation_job(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username):
@@ -478,144 +319,54 @@ async def run_translation_job(job_id, input_path, output_path, provider, directi
 
 def _sync_translation(job_id, input_path, output_path, provider, direction, api_key, system_instruction, ext, test_mode, username):
     dir_info = DIRECTION_MAP[direction]
-    glossary = load_glossary()
-    
     def cb(c, t, txt="", log_msg=""):
-        # Check if cancel was requested
-        if job_id in ACTIVE_JOBS and ACTIVE_JOBS[job_id].get("cancel_requested"):
-            raise InterruptedError("Translation cancelled by user")
-        # Estimate cost based on processed characters
-        rates = {
-            "Gemini": 0.0001,  # $0.1 per 1M chars
-            "Claude": 0.015,   # $15 per 1M chars
-            "Upstage": 0.0002, # $0.2 per 1M chars
-            "Free": 0.0
-        }
-        rate = rates.get(provider, 0.0)
-        if txt and job_id in ACTIVE_JOBS:
-            # Simple heuristic: increment cost per callback
-            ACTIVE_JOBS[job_id]["cost"] += (2000 / 1000) * rate
         update_job_progress(job_id, c, t, txt, log_msg)
         
     try:
         if provider == "Gemini":
-            translator = GeminiTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], glossary, system_instruction)
+            translator = GeminiTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), system_instruction)
         elif provider == "Claude":
-            translator = ClaudeTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], glossary, system_instruction)
+            translator = ClaudeTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), system_instruction)
         elif provider == "Upstage":
-            translator = UpstageTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], glossary, system_instruction)
+            translator = UpstageTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), system_instruction)
         else:
-            translator = FreeTranslator(dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], glossary, system_instruction)
+            translator = FreeTranslator(dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), system_instruction)
             
-        translator.src_regex = dir_info.get("src_regex", ".*")
-        
         processor = PDFProcessor(translator) if ext == ".pdf" else PPTXProcessor(translator)
         success = processor.process(input_path, output_path, cb, test_mode=test_mode)
         
-        # Check cancel after processing
-        if job_id in ACTIVE_JOBS and ACTIVE_JOBS[job_id].get("cancel_requested"):
-            ACTIVE_JOBS[job_id]["status"] = "cancelled"
-            cb_skip = lambda *a, **k: None
-            db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "cancelled", "",
-                               file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
-        elif success:
-            # 번역 성공 시 Supabase Storage에 결과물 업로드
+        if success:
             out_filename = os.path.basename(output_path)
             out_storage_path = f"results/{job_id}/{out_filename}"
-            
-            try:
-                with open(output_path, "rb") as f:
-                    supabase.storage.from("documents").upload(out_storage_path, f)
-                
-                # Public URL 획득
-                res = supabase.storage.from("documents").get_public_url(out_storage_path)
-                final_url = res.public_url
-                
-                ACTIVE_JOBS[job_id]["status"] = "completed"
-                ACTIVE_JOBS[job_id]["output_path"] = final_url
-                cb(1, 1, "완료!", "번역 결과물이 저장되었습니다.")
-                db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url, 
-                                   file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
-            except Exception as upload_err:
-                ACTIVE_JOBS[job_id]["status"] = "failed"
-                cb(1, 1, "오류 발생", f"결과 업로드 실패: {str(upload_err)}")
-                db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "failed", "",
-                                   file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
+            with open(output_path, "rb") as f:
+                supabase.storage.from("documents").upload(out_storage_path, f)
+            res = supabase.storage.from("documents").get_public_url(out_storage_path)
+            final_url = res.public_url
+            ACTIVE_JOBS[job_id].update({"status": "completed", "output_path": final_url})
+            db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url, file_size=ACTIVE_JOBS[job_id]["file_size"])
         else:
             ACTIVE_JOBS[job_id]["status"] = "failed"
-            cb(1, 1, "오류 발생", "번역 중 오류가 발생했습니다.")
-            db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "failed", "",
-                               file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
-            
-    except InterruptedError:
-        ACTIVE_JOBS[job_id]["status"] = "cancelled"
-        update_job_progress(job_id, 1, 1, "취소됨", "사용자가 번역을 취소했습니다.")
-        db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "cancelled", "",
-                           file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
     except Exception as e:
         ACTIVE_JOBS[job_id]["status"] = "failed"
-        cb(1, 1, "오류 발생", f"오류: {str(e)}")
-        db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "failed", "",
-                           file_size=ACTIVE_JOBS[job_id]["file_size"], cost=ACTIVE_JOBS[job_id]["cost"])
     finally:
-        if os.path.exists(input_path):
-            os.remove(input_path)
+        if os.path.exists(input_path): os.remove(input_path)
 
 @app.get("/history")
 async def get_history(current_user: dict = Depends(get_current_user)):
-    username = current_user["username"]
-    role = current_user["role"]
-    if role == "admin":
-        jobs = db_manager.get_jobs()
-    else:
-        jobs = db_manager.get_jobs(username)
-    return jobs
-
-# --- Admin Endpoints ---
-async def require_admin(current_user: dict = Depends(get_current_user)):
-    if current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
-
-@app.get("/admin/users")
-async def get_admin_users(admin: dict = Depends(require_admin)):
-    return db_manager.get_user_stats()
-
-@app.get("/admin/user-jobs/{target_username}")
-async def get_admin_user_jobs(target_username: str, admin: dict = Depends(require_admin)):
-    return db_manager.get_jobs(target_username)
-
-@app.delete("/admin/delete-job/{job_id}")
-async def admin_delete_job(job_id: str, admin: dict = Depends(require_admin)):
-    success = db_manager.delete_job(job_id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete job")
-    # Also remove from active jobs if present
-    if job_id in ACTIVE_JOBS:
-        del ACTIVE_JOBS[job_id]
-    return {"message": "Job deleted"}
+    return db_manager.get_jobs(current_user["username"]) if current_user["role"] != "admin" else db_manager.get_jobs()
 
 @app.post("/cancel/{job_id}")
 async def cancel_job(job_id: str, username: str = Depends(get_current_username)):
-    """Cancel a running translation job."""
-    if job_id in ACTIVE_JOBS:
-        ACTIVE_JOBS[job_id]["status"] = "cancelled"
-        ACTIVE_JOBS[job_id]["cancel_requested"] = True
+    if job_id in ACTIVE_JOBS: ACTIVE_JOBS[job_id]["status"] = "cancelled"
     db_manager.update_job_status(job_id, "cancelled")
-    return {"message": "Job cancelled"}
+    return {"message": "Cancelled"}
 
-from fastapi.responses import FileResponse
 @app.get("/download/{job_id}")
 async def download_file(job_id: str):
-    if job_id in ACTIVE_JOBS and ACTIVE_JOBS[job_id]["status"] == "completed" and ACTIVE_JOBS[job_id]["output_path"]:
-        return FileResponse(ACTIVE_JOBS[job_id]["output_path"], filename=f"translated_{ACTIVE_JOBS[job_id]['filename']}")
-    
+    job = ACTIVE_JOBS.get(job_id)
+    if job and job["status"] == "completed": return RedirectResponse(url=job["output_path"])
+    # Fallback to DB
     jobs = db_manager.get_jobs()
-    for job in jobs:
-        if job["job_id"] == job_id and job["status"] == "completed" and job["output_path"]:
-            if os.path.exists(job["output_path"]):
-                return FileResponse(job["output_path"], filename=f"translated_{job['filename']}")
-            else:
-                raise HTTPException(status_code=404, detail="File has been deleted or moved")
-                
-    raise HTTPException(status_code=404, detail="Job not found or not ready")
+    for j in jobs:
+        if j["job_id"] == job_id and j["output_path"]: return RedirectResponse(url=j["output_path"])
+    raise HTTPException(status_code=404)
