@@ -115,10 +115,6 @@ export const Dashboard: React.FC = () => {
     setProgress({ current: 0, total: 1, text: 'Uploading to storage...', cost: 0.0 });
 
     try {
-      // 파일명 정제 강화 (영문, 숫자만 남기고 나머지 제거)
-      const extension = file.name.split('.').pop() || 'bin';
-      const cleanBaseName = file.name
-        .split('.')[0]
       // 1. 서버에 업로드 티켓(Presigned URL) 요청
       const tokenResponse = await fetch('/api/upload', {
         method: 'POST',
