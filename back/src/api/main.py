@@ -192,24 +192,47 @@ async def get_active_job(job_id: str):
 
 @app.post("/translate")
 async def start_translation(file_url: str = Form(...), filename: str = Form(...), provider: str = Form(...), direction: str = Form(...), username: str = Depends(get_current_username)):
-    job_id = str(uuid.uuid4())
-    ext = os.path.splitext(filename)[1].lower()
-    ACTIVE_JOBS[job_id] = {"status": "processing", "current": 0, "total": 1, "text": "Downloading...", "filename": filename, "logs": [], "cost": 0.0}
-    input_path = os.path.join("/tmp", f"{job_id}{ext}")
-    output_path = os.path.join("/tmp", f"{job_id}_out{ext}")
-    
-    async with httpx.AsyncClient(timeout=600.0) as client:
-        async with client.stream("GET", file_url) as res:
-            with open(input_path, "wb") as f:
-                for chunk in res.aiter_bytes():
-                    f.write(chunk)
-    
-    db_manager.log_job(job_id, username, filename, provider, direction, "processing", "")
-    
-    # Vercel Serverless 대응: 응답을 즉시 반환하여 타임아웃 방지 (백그라운드에서 번역 계속)
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username, loop)
-    return {"job_id": job_id}
+    try:
+        print(f"DEBUG: [start_translation] Request received. filename={filename}, provider={provider}, direction={direction}")
+        job_id = str(uuid.uuid4())
+        ext = os.path.splitext(filename)[1].lower()
+        
+        ACTIVE_JOBS[job_id] = {"status": "processing", "current": 0, "total": 1, "text": "Downloading...", "filename": filename, "logs": [], "cost": 0.0}
+        input_path = os.path.join("/tmp", f"{job_id}{ext}")
+        output_path = os.path.join("/tmp", f"{job_id}_out{ext}")
+        
+        print(f"DEBUG: [start_translation] Starting download to {input_path}")
+        
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            async with client.stream("GET", file_url) as res:
+                print(f"DEBUG: [start_translation] R2 Download status: {res.status_code}")
+                res.raise_for_status()
+                with open(input_path, "wb") as f:
+                    for chunk in res.aiter_bytes():
+                        f.write(chunk)
+        
+        print(f"DEBUG: [start_translation] Download finished. size={os.path.getsize(input_path)} bytes")
+        
+        # DB 로그 기록 시도
+        try:
+            db_manager.log_job(job_id, username, filename, provider, direction, "processing", "")
+            print(f"DEBUG: [start_translation] DB logging success")
+        except Exception as db_e:
+            print(f"WARNING: [start_translation] DB logging failed: {db_e}")
+            # DB 실패해도 번역은 계속 진행하도록 pass
+        
+        # 비동기 실행
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username, loop)
+        
+        print(f"DEBUG: [start_translation] Executor started. Returning job_id: {job_id}")
+        return {"job_id": job_id}
+
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"CRITICAL ERROR in start_translation: {error_trace}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def _sync_translation(job_id, input_path, output_path, provider, direction, ext, username, loop):
     try:
