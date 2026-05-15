@@ -242,7 +242,7 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
             
             try:
-                # Cloudflare R2에 결과물 업로드 (boto3 사용)
+                # Cloudflare R2에 결과물 업로드 (가벼운 minio 사용)
                 account_id = os.getenv("R2_ACCOUNT_ID")
                 access_key = os.getenv("R2_ACCESS_KEY_ID")
                 secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
@@ -252,28 +252,28 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
                 if not account_id or not access_key or not secret_key or not public_domain:
                     raise Exception("R2 credentials missing on server")
                 
-                import boto3
-                s3_client = boto3.client(
-                    's3',
-                    endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-                    aws_access_key_id=access_key,
-                    aws_secret_access_key=secret_key,
-                    region_name='auto'
+                from minio import Minio
+                minio_client = Minio(
+                    f"{account_id}.r2.cloudflarestorage.com",
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    secure=True
                 )
                 
                 content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation" if ext == ".pptx" else "application/pdf"
                 
-                s3_client.upload_file(
-                    output_path, 
-                    bucket_name, 
+                # R2 업로드 실행
+                minio_client.fput_object(
+                    bucket_name,
                     out_key,
-                    ExtraArgs={'ContentType': content_type}
+                    output_path,
+                    content_type=content_type
                 )
                 
                 base_url = public_domain[:-1] if public_domain.endswith('/') else public_domain
                 final_url = f"{base_url}/{out_key}"
                 
-                print(f"DEBUG: Upload complete to Cloudflare R2. Public URL: {final_url}")
+                print(f"DEBUG: Upload complete to Cloudflare R2 (via MinIO). Public URL: {final_url}")
                 ACTIVE_JOBS[job_id].update({"status": "completed", "text": "완료!", "output_path": final_url})
                 db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
             except Exception as upload_err:
