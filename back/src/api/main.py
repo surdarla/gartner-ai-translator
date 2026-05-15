@@ -206,9 +206,9 @@ async def start_translation(file_url: str = Form(...), filename: str = Form(...)
     
     db_manager.log_job(job_id, username, filename, provider, direction, "processing", "")
     
-    # Vercel Serverless 대응: 글로벌 변수 대신 요청 시점에 즉시 루프 획득
+    # Vercel Serverless 대응: 응답을 즉시 반환하여 타임아웃 방지 (백그라운드에서 번역 계속)
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username, loop)
+    loop.run_in_executor(None, _sync_translation, job_id, input_path, output_path, provider, direction, ext, username, loop)
     return {"job_id": job_id}
 
 def _sync_translation(job_id, input_path, output_path, provider, direction, ext, username, loop):
