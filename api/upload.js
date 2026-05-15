@@ -1,34 +1,55 @@
 import { handleUpload } from '@vercel/blob';
 
 export default async function handler(request, response) {
-  const body = await request.json();
+  // CORS 헤더 설정
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // OPTIONS 요청 처리 (Preflight)
+  if (request.method === 'OPTIONS') {
+    return response.status(200).end();
+  }
+
+  // POST 요청만 허용
+  if (request.method !== 'POST') {
+    return response.status(405).json({ error: 'Method not allowed' });
+  }
 
   try {
+    // Vercel Node.js 런타임에서는 request.body가 이미 JSON으로 파싱되어 있습니다.
+    const body = request.body;
+    
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      throw new Error('BLOB_READ_WRITE_TOKEN is missing in environment variables');
+    }
+
     const jsonResponse = await handleUpload({
       body,
       request,
-      onBeforeGenerateToken: async (pathname /*, clientPayload */) => {
-        // 여기서 유저 인증 로직을 추가할 수 있습니다.
+      onBeforeGenerateToken: async (pathname) => {
         return {
           allowedContentTypes: [
             'application/pdf',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/vnd.ms-powerpoint'
+            'application/vnd.ms-powerpoint',
+            'application/vnd.ms-office'
           ],
-          tokenPayload: JSON.stringify({
-            // 유저 ID 등을 담을 수 있음
-          }),
+          tokenPayload: JSON.stringify({}),
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
-        // 업로드 완료 후 처리 (필요 시)
         console.log('Blob upload completed', blob, tokenPayload);
       },
     });
 
     return response.status(200).json(jsonResponse);
   } catch (error) {
-    console.error('Blob handleUpload error:', error);
-    return response.status(400).json({ error: error.message });
+    console.error('CRITICAL BLOB ERROR:', error.message);
+    return response.status(500).json({ 
+      error: 'Internal Server Error', 
+      message: error.message,
+      suggestion: 'Check if BLOB_READ_WRITE_TOKEN is set in Vercel Project Settings'
+    });
   }
 }
