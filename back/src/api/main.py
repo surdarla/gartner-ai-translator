@@ -220,23 +220,46 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
                     for ws in WS_CONNECTIONS[job_id]:
                         main_loop.call_soon_threadsafe(lambda: asyncio.create_task(ws.send_json({"current": c, "total": t, "text": txt, "log": log})))
         
+        print(f"DEBUG: Starting translation for job {job_id} with {provider}")
+        
+        api_key = os.getenv("GEMINI_API_KEY")
+        if provider == "Gemini" and not api_key:
+            raise Exception("GEMINI_API_KEY가 서버에 설정되지 않았습니다.")
+            
         if provider == "Gemini":
-            translator = GeminiTranslator(os.getenv("GEMINI_API_KEY"), dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
+            translator = GeminiTranslator(api_key, dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
         else:
             translator = FreeTranslator(dir_info["src_code"], dir_info["tgt_code"], dir_info["src_lang_name"], dir_info["lang_name"], load_glossary(), "")
         
         processor = PDFProcessor(translator) if ext == ".pdf" else PPTXProcessor(translator)
+        print(f"DEBUG: Processing file: {input_path}")
+        
         if processor.process(input_path, output_path, cb):
+            print(f"DEBUG: Processing success. Uploading {output_path} to Supabase...")
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
-            with open(output_path, "rb") as f:
-                supabase.storage.from_("documents").upload(out_key, f)
-            final_url = supabase.storage.from_("documents").get_public_url(out_key).public_url
-            ACTIVE_JOBS[job_id].update({"status": "completed", "output_path": final_url})
-            db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
+            
+            try:
+                with open(output_path, "rb") as f:
+                    supabase.storage.from_("documents").upload(out_key, f)
+                
+                final_url = supabase.storage.from_("documents").get_public_url(out_key).public_url
+                print(f"DEBUG: Upload complete. Public URL: {final_url}")
+                
+                ACTIVE_JOBS[job_id].update({"status": "completed", "text": "완료!", "output_path": final_url})
+                db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
+            except Exception as upload_err:
+                raise Exception(f"결과물 업로드 실패: {str(upload_err)}")
+        else:
+            raise Exception("문서 처리 중 알 수 없는 오류가 발생했습니다.")
+            
     except Exception as e:
+        error_msg = str(e)
+        print(f"CRITICAL ERROR in _sync_translation: {error_msg}")
         if job_id in ACTIVE_JOBS:
-            ACTIVE_JOBS[job_id]["status"] = "failed"
-        print(f"Error: {e}")
+            ACTIVE_JOBS[job_id].update({
+                "status": "failed",
+                "text": f"오류: {error_msg}"
+            })
     finally:
         if os.path.exists(input_path):
             os.remove(input_path)
