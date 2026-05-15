@@ -120,6 +120,20 @@ def save_users_db(users):
     with open(users_path, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=4, ensure_ascii=False)
 
+# --- Configuration & Helpers ---
+def get_frontend_url():
+    url = os.getenv("FRONTEND_URL")
+    if not url:
+        # Fallback for local development, but warn in production
+        return "http://localhost:5173"
+    return url.rstrip("/")
+
+def get_backend_url():
+    url = os.getenv("BACKEND_URL")
+    if not url:
+        return "http://localhost:8000"
+    return url.rstrip("/")
+
 @app.get("/auth/google/login")
 async def google_login(request: Request):
     import secrets
@@ -127,16 +141,14 @@ async def google_login(request: Request):
     import hashlib
     from urllib.parse import urlencode
 
-    # Stateless CSRF protection: state = nonce.HMAC(nonce)
-    # No cookies or sessions needed — works on Vercel serverless
-    nonce = secrets.token_urlsafe(32)
-    sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
-    state = f"{nonce}.{sig}"
+    # 1. 명시적인 redirect_uri 구성 (Google Console에 등록한 것과 100% 일치해야 함)
+    redirect_uri = f"{get_backend_url()}/auth/google/callback"
 
-    # Derive redirect_uri from the actual request URL — works on Vercel and locally
-    # without any env var. Replace /login with /callback in the current path.
-    login_url = str(request.url).split("?")[0]
-    redirect_uri = login_url.replace("/login", "/callback")
+    # 2. Stateless CSRF protection: state = nonce.signature
+    # 서버리스 인스턴스가 바뀌어도 SECRET_KEY만 같으면 검증 가능함
+    nonce = secrets.token_urlsafe(32)
+    signature = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    state = f"{nonce}.{signature}"
 
     params = urlencode({
         "client_id": GOOGLE_CLIENT_ID,
@@ -145,10 +157,10 @@ async def google_login(request: Request):
         "scope": "openid email profile",
         "state": state,
         "access_type": "online",
+        "prompt": "select_account"
     })
+    
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
-
-
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = None, state: str = None, error: str = None):
@@ -158,21 +170,22 @@ async def google_callback(request: Request, code: str = None, state: str = None,
 
     if error:
         raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
 
-    # Verify HMAC-signed state (stateless CSRF check — no cookies/sessions)
+    # 1. State 검증 (Stateless HMAC verification)
     try:
-        nonce, sig = state.rsplit(".", 1)
+        nonce, signature = state.rsplit(".", 1)
         expected_sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
-        if not _hmac.compare_digest(sig, expected_sig):
-            raise ValueError("bad sig")
+        if not _hmac.compare_digest(signature, expected_sig):
+            raise ValueError("Invalid OAuth state signature")
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid state parameter")
+        raise HTTPException(status_code=400, detail="Invalid OAuth state - possible CSRF")
 
-    # Reconstruct redirect_uri from the current request URL (strip query params)
-    redirect_uri = str(request.url).split("?")[0]
+    # 2. Token 교환을 위한 redirect_uri (로그인 시와 정확히 동일해야 함)
+    redirect_uri = f"{get_backend_url()}/auth/google/callback"
 
-
-    # Exchange authorization code for tokens
+    # 3. Authorization Code -> Access Token 교환
     async with httpx.AsyncClient() as client:
         token_res = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -184,46 +197,43 @@ async def google_callback(request: Request, code: str = None, state: str = None,
                 "grant_type": "authorization_code",
             },
         )
+    
     token_data = token_res.json()
-    access_token = token_data.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
+    if "access_token" not in token_data:
+        raise HTTPException(status_code=400, detail=f"Failed to exchange token: {token_data}")
 
-    # Fetch user info
+    # 4. 사용자 정보 가져오기
     async with httpx.AsyncClient() as client:
         userinfo_res = await client.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers={"Authorization": f"Bearer {token_data['access_token']}"},
         )
     user_info = userinfo_res.json()
-
+    
     email = user_info.get("email")
-    name = user_info.get("name", email)
-
     if not email:
-        raise HTTPException(status_code=400, detail="Google authentication failed: no email")
+        raise HTTPException(status_code=400, detail="Google account has no email")
 
-    # Auto-register user if not exists
+    # 5. 사용자 정보 저장 및 JWT 발급
     users = get_users_db()
     if email not in users:
         users[email] = {
             "email": email,
-            "name": name,
-            "password": "",
-            "sso": "google",
+            "name": user_info.get("name", email),
+            "password": "", # SSO
+            "sso": "google"
         }
         save_users_db(users)
 
     jwt_token = jwt.encode(
-        {"sub": email, "role": "user", "name": name},
+        {"sub": email, "role": "user", "name": user_info.get("name")},
         SECRET_KEY,
-        algorithm=ALGORITHM,
+        algorithm=ALGORITHM
     )
 
-    # Derive frontend URL from the request host if FRONTEND_URL is not explicitly set.
-    # This ensures correct behavior on Vercel even without the env var.
-    frontend_url = os.getenv("FRONTEND_URL") or f"{request.url.scheme}://{request.url.netloc}"
-    return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
+    # 6. 프론트엔드로 리다이렉트
+    return RedirectResponse(url=f"{get_frontend_url()}/login?token={jwt_token}")
+en}")
 
 
 @app.get("/auth/me")
