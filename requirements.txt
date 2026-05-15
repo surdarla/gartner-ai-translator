@@ -15,3 +15,4 @@ itsdangerous
 pandas
 tqdm
 supabase
+httpx

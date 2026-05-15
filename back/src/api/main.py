@@ -122,45 +122,103 @@ def save_users_db(users):
 
 @app.get("/auth/google/login")
 async def google_login(request: Request):
-    # Use the origin of the request for redirect back
-    origin = request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
-    # But for Authlib redirect_uri must be fixed or registered
+    import secrets
+    from urllib.parse import urlencode
+
+    state = secrets.token_urlsafe(32)
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     redirect_uri = f"{backend_url}/auth/google/callback"
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+    params = urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+    })
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        key="oauth_state",
+        value=state,
+        max_age=600,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    return response
 
 @app.get("/auth/google/callback")
-async def google_callback(request: Request):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-        user_info = token.get('userinfo')
-        if not user_info:
-            raise HTTPException(status_code=400, detail="Google authentication failed")
-        
-        email = user_info.get("email")
-        name = user_info.get("name")
-        
-        # Auto-register user if not exists
-        users = get_users_db()
-        if email not in users:
-            users[email] = {
-                "email": email,
-                "name": name,
-                "password": "", # No password for SSO users
-                "sso": "google"
-            }
-            save_users_db(users)
-        
-        jwt_token = jwt.encode({"sub": email, "role": "user", "name": name}, SECRET_KEY, algorithm=ALGORITHM)
-        
-        # Redirect back to frontend. Try to determine frontend URL.
-        # If in docker-compose, port 80 is mapped to 5173. 
-        # But if user is on localhost:5173 directly, we should redirect there.
-        # We'll use the Referer or a fixed env var. For now, let's try to be smart.
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost")
-        return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
-    except OAuthError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def google_callback(request: Request, code: str = None, state: str = None, error: str = None):
+    import httpx
+
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
+
+    # Verify CSRF state
+    cookie_state = request.cookies.get("oauth_state")
+    if not cookie_state or cookie_state != state:
+        raise HTTPException(status_code=400, detail="State mismatch - possible CSRF attack")
+
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    redirect_uri = f"{backend_url}/auth/google/callback"
+
+    # Exchange authorization code for tokens
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+    token_data = token_res.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
+
+    # Fetch user info
+    async with httpx.AsyncClient() as client:
+        userinfo_res = await client.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    user_info = userinfo_res.json()
+
+    email = user_info.get("email")
+    name = user_info.get("name", email)
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google authentication failed: no email")
+
+    # Auto-register user if not exists
+    users = get_users_db()
+    if email not in users:
+        users[email] = {
+            "email": email,
+            "name": name,
+            "password": "",
+            "sso": "google",
+        }
+        save_users_db(users)
+
+    jwt_token = jwt.encode(
+        {"sub": email, "role": "user", "name": name},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost")
+    response = RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
+    # Clear the state cookie
+    response.delete_cookie("oauth_state")
+    return response
+
 
 @app.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
