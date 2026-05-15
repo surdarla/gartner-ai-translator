@@ -125,11 +125,27 @@ export const Dashboard: React.FC = () => {
         .replace(/[^a-zA-Z0-9]/g, '') // 영문 숫자 외 전멸
         .substring(0, 20); // 너무 길면 자름
       
-      const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
-      
+      // 1. 서버에서 직접 업로드 토큰 받아오기 (리다이렉트 방지)
+      const tokenResponse = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          type: 'blob.generate-client-token', 
+          payload: { pathname: safePath, callbackUrl: window.location.origin + '/api/upload' } 
+        })
+      });
+
+      if (!tokenResponse.ok) {
+        const errorData = await tokenResponse.json();
+        throw new Error(`토큰 발급 실패: ${errorData.message || '로그인을 확인하세요'}`);
+      }
+
+      const { clientToken } = await tokenResponse.json();
+
+      // 2. 받아온 토큰으로 직접 업로드
       const blob = await upload(safePath, file, {
         access: 'public',
-        handleUploadUrl: '/api/upload',
+        clientToken: clientToken, // 수동으로 받은 토큰 주입
       });
       
       const publicUrl = blob.url;
