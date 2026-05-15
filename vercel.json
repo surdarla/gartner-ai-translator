@@ -8,14 +8,21 @@
     },
     {
       "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": { "maxDuration": 300 }
+      "use": "@vercel/python"
     },
     {
       "src": "api/upload.mjs",
       "use": "@vercel/node"
     }
   ],
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 300
+    },
+    "api/upload.mjs": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/upload",
