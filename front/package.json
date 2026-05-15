@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
     "@tailwindcss/vite": "^4.3.0",
+    "@vercel/blob": "^2.3.3",
     "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "i18next": "^26.1.0",

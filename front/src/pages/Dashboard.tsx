@@ -116,24 +116,14 @@ export const Dashboard: React.FC = () => {
     setProgress({ current: 0, total: 1, text: 'Uploading to storage...', cost: 0.0 });
 
     try {
-      // 1. Supabase Storage에 파일 업로드 (특수문자 제거하여 안전한 경로 생성)
-      const safeFileName = file.name
-        .replace(/[^\x00-\x7F]/g, '') // 한글 및 비ASCII 문자 제거
-        .replace(/[^a-zA-Z0-9.]/g, '_') // 영문, 숫자, 점 외에는 언더바로 대체
-        .replace(/_+/g, '_'); // 중복 언더바 정리
+      // 1. Vercel Blob에 파일 업로드 (50MB 제한 없음!)
+      const { upload } = await import('@vercel/blob/client');
+      const blob = await upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload', // 권한 확인을 위한 엔드포인트
+      });
       
-      const filePath = `uploads/${Date.now()}_${safeFileName || 'document'}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file);
-
-      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-
-      // 2. 업로드된 파일의 Public URL 가져오기
-      const { data: { publicUrl } } = supabase.storage
-        .from('documents')
-        .getPublicUrl(filePath);
+      const publicUrl = blob.url;
 
       setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });
 
