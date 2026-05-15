@@ -233,10 +233,9 @@ async def google_callback(request: Request, code: str = None, state: str = None,
 
     # 6. 프론트엔드로 리다이렉트
     return RedirectResponse(url=f"{get_frontend_url()}/login?token={jwt_token}")
-en}")
-
 
 @app.get("/auth/me")
+
 async def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
 
