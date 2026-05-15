@@ -128,6 +128,7 @@ export const Dashboard: React.FC = () => {
       const blob = await upload(safePath, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
+        contentType: file.type || 'application/octet-stream',
       });
 
       if (!blob.url) {
