@@ -133,8 +133,10 @@ async def google_login(request: Request):
     sig = _hmac.new(SECRET_KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest()
     state = f"{nonce}.{sig}"
 
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-    redirect_uri = f"{backend_url}/auth/google/callback"
+    # Derive redirect_uri from the actual request URL — works on Vercel and locally
+    # without any env var. Replace /login with /callback in the current path.
+    login_url = str(request.url).split("?")[0]
+    redirect_uri = login_url.replace("/login", "/callback")
 
     params = urlencode({
         "client_id": GOOGLE_CLIENT_ID,
@@ -145,6 +147,7 @@ async def google_login(request: Request):
         "access_type": "online",
     })
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+
 
 
 @app.get("/auth/google/callback")
@@ -165,8 +168,9 @@ async def google_callback(request: Request, code: str = None, state: str = None,
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-    redirect_uri = f"{backend_url}/auth/google/callback"
+    # Reconstruct redirect_uri from the current request URL (strip query params)
+    redirect_uri = str(request.url).split("?")[0]
+
 
     # Exchange authorization code for tokens
     async with httpx.AsyncClient() as client:
