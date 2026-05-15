@@ -5,7 +5,6 @@ import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText,
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, getWsUrl } from '../api';
-import { supabase } from '../supabaseClient';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -120,33 +119,35 @@ export const Dashboard: React.FC = () => {
       const extension = file.name.split('.').pop() || 'bin';
       const cleanBaseName = file.name
         .split('.')[0]
-        .replace(/[^a-zA-Z0-9]/g, '') // 영문 숫자 외 전멸
-        .substring(0, 20); // 너무 길면 자름
-      const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
-      
-      // Supabase Storage 업로드 (Vercel Blob의 고질적인 용량/에러 문제 우회)
-      const { error } = await supabase.storage
-        .from('uploads')
-        .upload(safePath, file, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: file.type || 'application/octet-stream',
-        });
+      // 1. 서버에 업로드 티켓(Presigned URL) 요청
+      const tokenResponse = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          filename: file.name, 
+          contentType: file.type || 'application/octet-stream' 
+        })
+      });
 
-      if (error) {
-        throw new Error(`Supabase 업로드 실패: ${error.message}`);
+      if (!tokenResponse.ok) {
+        const err = await tokenResponse.json();
+        throw new Error(`업로드 티켓 발급 실패: ${err.error || tokenResponse.statusText}`);
       }
 
-      // 업로드 후 퍼블릭 URL 가져오기
-      const { data: publicUrlData } = supabase.storage
-        .from('uploads')
-        .getPublicUrl(safePath);
+      const { uploadUrl, publicUrl } = await tokenResponse.json();
 
-      if (!publicUrlData || !publicUrlData.publicUrl) {
-        throw new Error('Supabase 퍼블릭 URL을 가져오지 못했습니다.');
+      // 2. 발급받은 티켓(uploadUrl)을 통해 R2 스토리지로 직접 업로드 (Vercel 페이로드 제한 우회)
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`클라우드 직접 업로드 실패: ${uploadResponse.status} ${uploadResponse.statusText}`);
       }
-
-      const publicUrl = publicUrlData.publicUrl;
 
       setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });
 
