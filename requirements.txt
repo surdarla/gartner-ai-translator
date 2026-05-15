@@ -14,4 +14,4 @@ authlib
 itsdangerous
 pandas
 tqdm
-firebase-admin
+supabase

@@ -125,7 +125,8 @@ async def google_login(request: Request):
     # Use the origin of the request for redirect back
     origin = request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
     # But for Authlib redirect_uri must be fixed or registered
-    redirect_uri = "http://localhost:8000/auth/google/callback"
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    redirect_uri = f"{backend_url}/auth/google/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 @app.get("/auth/google/callback")
