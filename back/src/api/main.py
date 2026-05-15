@@ -216,8 +216,11 @@ async def google_callback(request: Request, code: str = None, state: str = None,
         algorithm=ALGORITHM,
     )
 
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost")
+    # Derive frontend URL from the request host if FRONTEND_URL is not explicitly set.
+    # This ensures correct behavior on Vercel even without the env var.
+    frontend_url = os.getenv("FRONTEND_URL") or f"{request.url.scheme}://{request.url.netloc}"
     return RedirectResponse(url=f"{frontend_url}/login?token={jwt_token}")
+
 
 @app.get("/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
