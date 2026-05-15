@@ -118,13 +118,16 @@ export const Dashboard: React.FC = () => {
       // 1. Vercel Blob에 파일 업로드 (50MB 제한 없음!)
       const { upload } = await import('@vercel/blob/client');
       
-      // 파일명 정제 (한글 및 특수문자 제거)
-      const safeFileName = file.name
-        .replace(/[^\x00-\x7F]/g, '') // 한글 제거
-        .replace(/[^a-zA-Z0-9.]/g, '_') // 영문, 숫자, 점 외에는 _로 대체
-        .replace(/_+/g, '_'); // 연속된 _ 정리
+      // 파일명 정제 강화 (영문, 숫자만 남기고 나머지 제거)
+      const extension = file.name.split('.').pop() || 'bin';
+      const cleanBaseName = file.name
+        .split('.')[0]
+        .replace(/[^a-zA-Z0-9]/g, '') // 영문 숫자 외 전멸
+        .substring(0, 20); // 너무 길면 자름
       
-      const blob = await upload(`uploads/${Date.now()}_${safeFileName || 'doc'}`, file, {
+      const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
+      
+      const blob = await upload(safePath, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
       });
