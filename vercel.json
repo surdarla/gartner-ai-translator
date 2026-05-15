@@ -12,14 +12,14 @@
       "config": { "maxDuration": 300 }
     },
     {
-      "src": "api/upload.js",
+      "src": "api/upload.mjs",
       "use": "@vercel/node"
     }
   ],
   "rewrites": [
     {
       "source": "/api/upload",
-      "destination": "api/upload.js"
+      "destination": "api/upload.mjs"
     },
     {
       "source": "/api/(.*)",
