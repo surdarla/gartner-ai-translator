@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText, Download, X, Play, Ban } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import { getApiUrl, getWsUrl } from '../api';
+import { getApiUrl } from '../api';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -27,7 +27,7 @@ export const Dashboard: React.FC = () => {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+// WebSocket 대신 Polling 사용으로 인해 삭제됨
   const startTimeRef = useRef<number | null>(null);
 
   // Restore job on mount
