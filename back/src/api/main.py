@@ -239,7 +239,11 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
             
             try:
+                # Vercel Blob에 결과물 업로드 (Python SDK 대신 API 직접 호출)
                 blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
+                if not blob_token:
+                    raise Exception("BLOB_READ_WRITE_TOKEN is missing on server")
+                    
                 with open(output_path, "rb") as f:
                     file_content = f.read()
                 
@@ -249,6 +253,7 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
                     "x-api-version": "2023-01-30",
                 }
                 
+                # Vercel Blob PUT API 호출
                 with httpx.Client() as client:
                     blob_res = client.put(blob_api_url, content=file_content, headers=headers)
                     blob_res.raise_for_status()
