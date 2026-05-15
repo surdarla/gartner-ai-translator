@@ -27,11 +27,11 @@
     },
     {
       "source": "/(.*)",
-      "destination": "/$1"
+      "destination": "front/$1"
     },
     {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "front/index.html"
     }
   ]
 }
