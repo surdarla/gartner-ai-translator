@@ -19,6 +19,6 @@
   "rewrites": [
     { "source": "/api/upload", "destination": "api/upload.mjs" },
     { "source": "/api/(.*)", "destination": "api/index.py" },
-    { "source": "/(.*)", "destination": "/front/$1" }
+    { "source": "/(.*)", "destination": "/$1" }
   ]
 }

@@ -1,6 +1,7 @@
-# 프론트엔드 의존성 및 소스는 서버리스 함수 번들에 포함하지 않음
+# 빌드에 필요한 소스 코드는 제외하지 않음
+node_modules
 front/node_modules
-front/src
 back/node_modules
 back/venv
 .git
+.vercel
