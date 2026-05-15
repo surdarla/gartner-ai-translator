@@ -125,7 +125,7 @@ export const Dashboard: React.FC = () => {
       const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
       
       // Supabase Storage 업로드 (Vercel Blob의 고질적인 용량/에러 문제 우회)
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from('uploads')
         .upload(safePath, file, {
           cacheControl: '3600',
