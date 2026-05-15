@@ -425,25 +425,31 @@ async def start_translation(
         "cost": 0.0
     }
 
-    # 2. Storage에서 임시 파일로 다운로드 (Vercel은 /tmp만 쓰기 가능)
+    # 2. Storage에서 임시 파일로 다운로드 (Streaming 방식 - 메모리 절약)
     input_path = ""
     try:
-        # /tmp 디렉토리 강제 지정
         tmp_dir = "/tmp" if os.getenv("VERCEL") == "1" else None
-        
-        async with httpx.AsyncClient(timeout=300.0) as client: # 다운로드 타임아웃 확장
-            res = await client.get(file_url)
-            if res.status_code != 200:
-                raise Exception(f"Storage download failed: {res.status_code}")
+        # 스트리밍을 위한 임시 파일 생성
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=tmp_dir) as tmp_in:
+            input_path = tmp_in.name
             
-            file_content = res.content
-            ACTIVE_JOBS[job_id]["file_size"] = len(file_content)
+            print(f"[Job {job_id}] Starting streaming download for {filename}...")
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                async with client.stream("GET", file_url) as response:
+                    if response.status_code != 200:
+                        raise Exception(f"Storage download failed: {response.status_code}")
+                    
+                    downloaded_size = 0
+                    for chunk in response.aiter_bytes(chunk_size=1024*1024): # 1MB 단위로 스트리밍
+                        tmp_in.write(chunk)
+                        downloaded_size += len(chunk)
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=tmp_dir) as tmp_in:
-                tmp_in.write(file_content)
-                input_path = tmp_in.name
+            ACTIVE_JOBS[job_id]["file_size"] = downloaded_size
+            print(f"[Job {job_id}] Download complete: {downloaded_size} bytes saved to {input_path}")
+            
     except Exception as e:
-        error_msg = f"파일 다운로드 실패: {str(e)}"
+        error_msg = f"파일 스트리밍 다운로드 실패: {str(e)}"
+        print(f"[Job {job_id}] ERROR: {error_msg}")
         ACTIVE_JOBS[job_id]["status"] = "failed"
         ACTIVE_JOBS[job_id]["text"] = error_msg
         db_manager.log_job(job_id, username, filename, provider, direction, "failed", error_msg, file_size=0)
