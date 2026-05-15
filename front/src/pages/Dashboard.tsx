@@ -5,7 +5,6 @@ import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText,
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, getWsUrl } from '../api';
-import { supabase } from '../supabaseClient';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
