@@ -32,7 +32,6 @@ from core.document_processor import PDFProcessor, PPTXProcessor
 from core.db import DatabaseManager, supabase
 
 db_manager = DatabaseManager()
-# Removed immediate call to avoid startup crash in serverless env
 
 app = FastAPI(title="AI Document Translator API")
 
@@ -230,8 +229,8 @@ def _sync_translation(job_id, input_path, output_path, provider, direction, ext,
         if processor.process(input_path, output_path, cb):
             out_key = f"results/{job_id}/{os.path.basename(output_path)}"
             with open(output_path, "rb") as f:
-                supabase.storage.from("documents").upload(out_key, f)
-            final_url = supabase.storage.from("documents").get_public_url(out_key).public_url
+                supabase.storage.from_("documents").upload(out_key, f)
+            final_url = supabase.storage.from_("documents").get_public_url(out_key).public_url
             ACTIVE_JOBS[job_id].update({"status": "completed", "output_path": final_url})
             db_manager.log_job(job_id, username, ACTIVE_JOBS[job_id]["filename"], provider, direction, "completed", final_url)
     except Exception as e:
@@ -251,7 +250,8 @@ async def download_file(job_id: str):
     job = ACTIVE_JOBS.get(job_id)
     if job and job.get("output_path"):
         return RedirectResponse(url=job["output_path"])
-    res = supabase.table("jobs").select("output_path").eq("job_id", job_id).execute()
-    if res.data:
-        return RedirectResponse(url=res.data[0]["output_path"])
+    if supabase:
+        res = supabase.table("jobs").select("output_path").eq("job_id", job_id).execute()
+        if res.data:
+            return RedirectResponse(url=res.data[0]["output_path"])
     raise HTTPException(status_code=404)
