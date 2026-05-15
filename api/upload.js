@@ -1,29 +1,31 @@
-const { handleUpload } = require('@vercel/blob');
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-module.exports = async function handler(request, response) {
-  response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (request.method === 'OPTIONS') {
-    return response.status(200).end();
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  if (request.method !== 'POST') {
-    return response.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
+    // ESM-only 패키지(@vercel/blob)를 CommonJS 환경에서 사용하려면
+    // 반드시 동적 import()를 사용해야 합니다.
+    const { handleUpload } = await import('@vercel/blob');
+
     const jsonResponse = await handleUpload({
-      body: request.body,
-      request,
+      body: req.body,
+      request: req,
       onBeforeGenerateToken: async (pathname) => {
         return {
           allowedContentTypes: [
             'application/pdf',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
             'application/vnd.ms-powerpoint',
-            'application/octet-stream'
+            'application/octet-stream',
           ],
           tokenPayload: JSON.stringify({}),
         };
@@ -33,11 +35,9 @@ module.exports = async function handler(request, response) {
       },
     });
 
-    return response.status(200).json(jsonResponse);
+    return res.status(200).json(jsonResponse);
   } catch (error) {
-    console.error('Blob upload handler error:', error.message);
-    return response.status(500).json({
-      error: error.message
-    });
+    console.error('Blob handler error:', error.message);
+    return res.status(500).json({ error: error.message });
   }
 };
