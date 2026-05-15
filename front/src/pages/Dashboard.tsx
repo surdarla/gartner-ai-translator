@@ -5,7 +5,7 @@ import { UploadCloud, Settings, ChevronDown, CheckCircle, AlertCircle, FileText,
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { getApiUrl, getWsUrl } from '../api';
-import { upload } from '@vercel/blob/client';
+import { supabase } from '../supabaseClient';
 
 export const Dashboard: React.FC = () => {
   const { t } = useTranslation();
@@ -124,18 +124,29 @@ export const Dashboard: React.FC = () => {
         .substring(0, 20); // 너무 길면 자름
       const safePath = `uploads/${Date.now()}_${cleanBaseName}.${extension}`;
       
-      // 공식 Vercel Blob SDK를 사용한 업로드 (CORS 및 리다이렉트 자동 처리)
-      const blob = await upload(safePath, file, {
-        access: 'public',
-        handleUploadUrl: '/api/upload',
-        contentType: file.type || 'application/octet-stream',
-      });
+      // Supabase Storage 업로드 (Vercel Blob의 고질적인 용량/에러 문제 우회)
+      const { data, error } = await supabase.storage
+        .from('uploads')
+        .upload(safePath, file, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: file.type || 'application/octet-stream',
+        });
 
-      if (!blob.url) {
-        throw new Error('업로드 후 URL을 받아오지 못했습니다.');
+      if (error) {
+        throw new Error(`Supabase 업로드 실패: ${error.message}`);
       }
 
-      const publicUrl = blob.url;
+      // 업로드 후 퍼블릭 URL 가져오기
+      const { data: publicUrlData } = supabase.storage
+        .from('uploads')
+        .getPublicUrl(safePath);
+
+      if (!publicUrlData || !publicUrlData.publicUrl) {
+        throw new Error('Supabase 퍼블릭 URL을 가져오지 못했습니다.');
+      }
+
+      const publicUrl = publicUrlData.publicUrl;
 
       setProgress({ current: 0, total: 1, text: 'Triggering translation...', cost: 0.0 });
 
