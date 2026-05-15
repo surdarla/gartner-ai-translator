@@ -9,27 +9,26 @@ except ImportError:
     SUPABASE_AVAILABLE = False
 
 
+# Initialize global supabase client
+def _get_global_supabase():
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(url, key)
+    except:
+        return None
+
+supabase = _get_global_supabase()
+
 class DatabaseManager:
     def __init__(self):
-        self.db: "Client | None" = self._init_supabase()
+        self.db = supabase
 
-    def _init_supabase(self):
-        if not SUPABASE_AVAILABLE:
-            logging.warning("supabase package not installed. DB features disabled.")
-            return None
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
-        if not url or not key:
-            logging.warning(
-                "SUPABASE_URL / SUPABASE_KEY not set. DB features disabled."
-            )
-            return None
-        try:
-            client = create_client(url, key)
-            return client
-        except Exception as e:
-            logging.error(f"Failed to initialize Supabase: {e}")
-            return None
+    # Redundant method removed, now using global supabase
+    pass
 
     # ------------------------------------------------------------------
     # Usage Logs
