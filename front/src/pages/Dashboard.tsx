@@ -116,8 +116,13 @@ export const Dashboard: React.FC = () => {
     setProgress({ current: 0, total: 1, text: 'Uploading to storage...', cost: 0.0 });
 
     try {
-      // 1. Supabase Storage에 파일 업로드
-      const filePath = `uploads/${Date.now()}_${file.name.replace(/\s/g, '_')}`;
+      // 1. Supabase Storage에 파일 업로드 (특수문자 제거하여 안전한 경로 생성)
+      const safeFileName = file.name
+        .replace(/[^\x00-\x7F]/g, '') // 한글 및 비ASCII 문자 제거
+        .replace(/[^a-zA-Z0-9.]/g, '_') // 영문, 숫자, 점 외에는 언더바로 대체
+        .replace(/_+/g, '_'); // 중복 언더바 정리
+      
+      const filePath = `uploads/${Date.now()}_${safeFileName || 'document'}`;
       
       const { error: uploadError } = await supabase.storage
         .from('documents')
