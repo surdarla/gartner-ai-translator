@@ -1,7 +1,15 @@
-# 빌드에 필요한 소스 코드는 제외하지 않음
+.venv
+venv
 node_modules
 front/node_modules
 back/node_modules
-back/venv
 .git
 .vercel
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+dist/
+output/
