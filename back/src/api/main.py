@@ -121,10 +121,18 @@ def save_users_db(users):
         json.dump(users, f, indent=4, ensure_ascii=False)
 
 # --- Configuration & Helpers ---
-def get_frontend_url():
+def get_frontend_url(request: Request = None):
     url = os.getenv("FRONTEND_URL")
+    
+    # Vercel 환경인데 url이 없거나 localhost라면, 현재 요청 주소에서 도메인 추출
+    if os.getenv("VERCEL") == "1" or (not url or "localhost" in url):
+        if request:
+            # request.url.netloc은 ai-translator-pi-ruby.vercel.app 같은 도메인임
+            detected_url = f"{request.url.scheme}://{request.url.netloc}"
+            # 만약 netloc에 /api가 포함되어 있다면 제거 (Vercel rewrite 고려)
+            return detected_url.replace("/api", "").rstrip("/")
+            
     if not url:
-        # Fallback for local development, but warn in production
         return "http://localhost:5173"
     return url.rstrip("/")
 
@@ -231,8 +239,8 @@ async def google_callback(request: Request, code: str = None, state: str = None,
         algorithm=ALGORITHM
     )
 
-    # 6. 프론트엔드로 리다이렉트
-    return RedirectResponse(url=f"{get_frontend_url()}/login?token={jwt_token}")
+    # 6. 프론트엔드로 리다이렉트 (request를 전달하여 자동 도메인 감지)
+    return RedirectResponse(url=f"{get_frontend_url(request)}/login?token={jwt_token}")
 
 @app.get("/auth/me")
 
